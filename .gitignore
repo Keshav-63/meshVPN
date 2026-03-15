@@ -1,0 +1,35 @@
+# Local environment files
+infra/.env
+.env
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+control-plane/control-plane
+control-plane/control-plane.exe
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Python cache and virtual environments inside generated apps
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+
+# Uploaded/generated runtime data
+**/backend/uploads/
+**/uploads/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

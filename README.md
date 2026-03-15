@@ -27,7 +27,7 @@ This machine already has Go, Git, and Docker CLI installed. Docker Desktop still
 
 Traefik must know which port the application listens on inside its container. Many web apps use `3000`, but some use `80`, `8080`, or something else. The `port` field lets the control plane tell Traefik the correct target.
 
-## Run the POC
+## Run the POC (Localhost)
 
 1. Start Docker Desktop.
 2. Start Traefik:
@@ -61,6 +61,87 @@ Traefik must know which port the application listens on inside its container. Ma
 6. Open the deployed app at `http://demo.localhost`.
 
 7. Open the Traefik dashboard at `http://localhost:8081`.
+
+## Run With Cloudflare Tunnel (Public)
+
+1. Copy `infra/.env.example` to `infra/.env` and set:
+   - `CLOUDFLARE_TUNNEL_TOKEN=<your token>`
+   - `APP_BASE_DOMAIN=keshavstack.tech`
+
+2. In Cloudflare Zero Trust, for your named tunnel, add these Public Hostnames:
+   - `self.keshavstack.tech` -> `http://control-plane:8080`
+   - `*.keshavstack.tech` -> `http://traefik:80`
+
+   This is required because `cloudflared` runs inside Docker, where `localhost` means the `cloudflared` container itself.
+
+3. Start the full stack:
+
+   ```powershell
+   cd infra
+   docker compose --env-file .env up -d
+   ```
+
+4. Verify control plane:
+
+   ```powershell
+   curl https://self.keshavstack.tech/health
+   ```
+
+5. Deploy an app with a chosen subdomain:
+
+   ```powershell
+   curl -X POST https://self.keshavstack.tech/deploy ^
+     -H "Content-Type: application/json" ^
+     -d "{\"repo\":\"https://github.com/your-org/your-app.git\",\"port\":3000,\"subdomain\":\"projectname\"}"
+   ```
+
+6. Access deployed app at:
+   - `https://projectname.keshavstack.tech`
+
+## Build Logs And App Logs API
+
+The deploy API now stores build logs and exposes container runtime logs.
+
+### Deploy with runtime env and build args
+
+Use `env` for container runtime environment variables and `build_args` for Docker build-time arguments.
+
+```powershell
+curl -X POST https://self.keshavstack.tech/deploy ^
+   -H "Content-Type: application/json" ^
+   -d "{\"repo\":\"https://github.com/your-org/your-app.git\",\"port\":3000,\"subdomain\":\"projectname\",\"env\":{\"API_URL\":\"https://api.example.com\",\"NODE_ENV\":\"production\"},\"build_args\":{\"NEXT_PUBLIC_API_BASE\":\"https://api.example.com\"}}"
+```
+
+Response now includes `build_logs`.
+
+### Read deployment history
+
+```powershell
+curl https://self.keshavstack.tech/deployments
+```
+
+### Read build logs by deployment id
+
+```powershell
+curl https://self.keshavstack.tech/deployments/<deployment_id>/build-logs
+```
+
+### Read application logs by deployment id
+
+```powershell
+curl "https://self.keshavstack.tech/deployments/<deployment_id>/app-logs?tail=300"
+```
+
+`tail` is optional and defaults to `200`.
+
+### Dockerfile note for build args
+
+Build args work only if the target Dockerfile declares matching `ARG` keys.
+
+```dockerfile
+ARG NEXT_PUBLIC_API_BASE
+ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+```
 
 ## Current POC limits
 
