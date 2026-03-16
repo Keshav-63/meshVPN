@@ -1,0 +1,36 @@
+package domain
+
+import "time"
+
+type DeploymentRecord struct {
+	DeploymentID string            `json:"deployment_id"`
+	RequestedBy  string            `json:"requested_by,omitempty"`
+	Repo         string            `json:"repo"`
+	Subdomain    string            `json:"subdomain"`
+	Port         int               `json:"port"`
+	CPUCores     float64           `json:"cpu_cores,omitempty"`
+	MemoryMB     int               `json:"memory_mb,omitempty"`
+	Container    string            `json:"container,omitempty"`
+	Image        string            `json:"image,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	Status       string            `json:"status"`
+	Error        string            `json:"error,omitempty"`
+	BuildLogs    string            `json:"build_logs,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	BuildArgs    map[string]string `json:"build_args,omitempty"`
+	StartedAt    time.Time         `json:"started_at"`
+	FinishedAt   *time.Time        `json:"finished_at,omitempty"`
+}
+
+func CloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	copyMap := make(map[string]string, len(values))
+	for k, v := range values {
+		copyMap[k] = v
+	}
+
+	return copyMap
+}

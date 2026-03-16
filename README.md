@@ -41,7 +41,7 @@ Traefik must know which port the application listens on inside its container. Ma
 
    ```powershell
    cd control-plane
-   go run .
+   go run ./cmd/control-plane
    ```
 
 4. Check health:
@@ -151,3 +151,37 @@ ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 - There is no cleanup endpoint yet.
 
 Those limits are normal for this stage. They are the reason a later worker, job queue, and database layer will exist.
+
+## Phase 1 Backend Infra (Implemented)
+
+The control plane now includes:
+
+- Supabase JWT auth middleware (GitHub provider only).
+- Async deployment queue with background worker.
+- Postgres/Supabase migrations for org/project/deployments/logs/analytics tables.
+
+### New environment variables
+
+- `DATABASE_URL` or `SUPABASE_DB_URL`: Postgres connection string.
+- `SUPABASE_JWT_SECRET`: JWT secret from Supabase project settings.
+- `REQUIRE_AUTH`: `true` (default) or `false` for local debugging.
+- `WORKER_POLL_INTERVAL`: e.g. `2s`.
+- `WORKER_BATCH_SIZE`: reserved for next worker optimization phase.
+
+Set these in `infra/.env` (copy from `infra/.env.example`), then run:
+
+```powershell
+cd infra
+docker compose --env-file .env up -d
+```
+
+### Deploy API behavior change
+
+`POST /deploy` now returns `202 Accepted` with `status: queued`.
+The background worker performs clone/build/run and updates deployment status to `deploying`, then `running` or `failed`.
+
+## Postman Testing
+
+Complete Phase 1 Postman flow is documented in:
+
+- `docs/postman-phase1-api-testing.md`
