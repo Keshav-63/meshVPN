@@ -10,6 +10,7 @@ import (
 	"MeshVPN-slef-hosting/control-plane/internal/runtime"
 	"MeshVPN-slef-hosting/control-plane/internal/service"
 	"MeshVPN-slef-hosting/control-plane/internal/store"
+	"MeshVPN-slef-hosting/control-plane/internal/telemetry"
 )
 
 func main() {
@@ -27,9 +28,12 @@ func main() {
 		defer cleanup()
 	}
 
-	runner := runtime.NewRunner()
+	telemetry.Register()
+
+	driver := runtime.NewDriverFromBackend(cfg.RuntimeBackend, cfg.K8sNamespace)
+	runner := runtime.NewRunnerWithDriver(driver)
 	deploymentService := service.NewDeploymentService(deps.DeploymentRepo, deps.JobRepo, runner)
-	worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval)
+	worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)
 
 	workerCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()

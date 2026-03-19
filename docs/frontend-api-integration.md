@@ -27,7 +27,7 @@ export async function getHealth() {
 
 ## 2) Trigger a deployment
 
-Supports runtime env vars (`env`) and Docker build args (`build_args`).
+Supports runtime env vars (`env`), Docker build args (`build_args`), and CPU-first autoscaling fields.
 
 ```js
 export async function deployApp() {
@@ -35,6 +35,15 @@ export async function deployApp() {
     repo: "https://github.com/your-org/your-app.git",
     port: 3000,
     subdomain: "projectname",
+    scaling_mode: "horizontal",
+    min_replicas: 2,
+    max_replicas: 10,
+    cpu_target_utilization: 65,
+    cpu_request_milli: 500,
+    cpu_limit_milli: 1000,
+    node_selector: {
+      "meshvpn.worker": "true"
+    },
     env: {
       NODE_ENV: "production",
       API_URL: "https://api.example.com"
@@ -63,9 +72,10 @@ export async function deployApp() {
 Expected successful response fields include:
 
 - `deployment_id`
-- `url`
-- `container`
-- `build_logs`
+- `status` (`queued` for async flow)
+- `scaling_mode`, `min_replicas`, `max_replicas`
+- `cpu_target_utilization`, `cpu_request_milli`, `cpu_limit_milli`
+- `node_selector`
 
 ## 3) List deployments
 
@@ -186,3 +196,15 @@ ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 
 - If frontend runs on a different origin, configure a reverse proxy or CORS middleware in the control-plane service.
 - Keep API host in a frontend environment variable, for example `VITE_API_BASE` or `NEXT_PUBLIC_API_BASE`.
+
+## 10) Prometheus metrics endpoint
+
+The control plane now exposes a Prometheus endpoint:
+
+- `GET /metrics`
+
+Useful app-level metrics:
+
+- `control_plane_deploy_requests_total{scaling_mode=...}`
+- `control_plane_worker_jobs_total{status=...}`
+- `control_plane_worker_job_duration_seconds`

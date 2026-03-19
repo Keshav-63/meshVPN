@@ -12,6 +12,10 @@ type ControlPlaneConfig struct {
 	RequireAuth        bool
 	WorkerPollInterval time.Duration
 	WorkerBatchSize    int
+	RuntimeBackend     string
+	EnableCPUHPA       bool
+	K8sNamespace       string
+	K8sConfigPath      string
 }
 
 func Load() ControlPlaneConfig {
@@ -41,11 +45,32 @@ func Load() ControlPlaneConfig {
 		}
 	}
 
+	runtimeBackend := os.Getenv("RUNTIME_BACKEND")
+	if runtimeBackend == "" {
+		runtimeBackend = "docker"
+	}
+
+	enableCPUHPA := false
+	if raw := os.Getenv("ENABLE_CPU_HPA"); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			enableCPUHPA = parsed
+		}
+	}
+
+	k8sNamespace := os.Getenv("K8S_NAMESPACE")
+	if k8sNamespace == "" {
+		k8sNamespace = "default"
+	}
+
 	return ControlPlaneConfig{
 		DatabaseURL:        dbURL,
 		SupabaseJWTSecret:  os.Getenv("SUPABASE_JWT_SECRET"),
 		RequireAuth:        requireAuth,
 		WorkerPollInterval: pollInterval,
 		WorkerBatchSize:    batchSize,
+		RuntimeBackend:     runtimeBackend,
+		EnableCPUHPA:       enableCPUHPA,
+		K8sNamespace:       k8sNamespace,
+		K8sConfigPath:      os.Getenv("K8S_CONFIG_PATH"),
 	}
 }

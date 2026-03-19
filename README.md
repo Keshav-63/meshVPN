@@ -185,3 +185,17 @@ The background worker performs clone/build/run and updates deployment status to 
 Complete Phase 1 Postman flow is documented in:
 
 - `docs/postman-phase1-api-testing.md`
+
+## Phase 2 Implementation + Testing
+
+Phase 2 runbook (K3s + Tailscale + CPU-first autoscaling + metrics) is documented in:
+
+- `docs/phase2-k3s-implementation-and-testing.md`
+
+Complete installation checklist, Docker vs k3s roles, and end-to-end user workflow testing are documented in:
+
+- `docs/phase2-installation-and-user-workflow.md`
+
+Beginner-friendly step-by-step setup (Tailscale + k3s + Prometheus/Grafana + complete workflow) is documented in:
+
+- `docs/phase2-beginner-full-setup.md`

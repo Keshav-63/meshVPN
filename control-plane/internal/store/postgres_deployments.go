@@ -57,12 +57,13 @@ func (r *PostgresDeploymentRepository) Update(rec domain.DeploymentRecord) {
 
 func (r *PostgresDeploymentRepository) Get(id string) (domain.DeploymentRecord, error) {
 	const query = `
-SELECT deployment_id, requested_by, repo, subdomain, port, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, requested_by, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 WHERE deployment_id = $1
 `
 
 	var rec domain.DeploymentRecord
+	var nodeSelectorRaw []byte
 	var envRaw []byte
 	var buildArgsRaw []byte
 	var container sql.NullString
@@ -78,6 +79,13 @@ WHERE deployment_id = $1
 		&rec.Repo,
 		&rec.Subdomain,
 		&rec.Port,
+		&rec.ScalingMode,
+		&rec.MinReplicas,
+		&rec.MaxReplicas,
+		&rec.CPUTarget,
+		&rec.CPURequest,
+		&rec.CPULimit,
+		&nodeSelectorRaw,
 		&rec.CPUCores,
 		&rec.MemoryMB,
 		&container,
@@ -118,6 +126,7 @@ WHERE deployment_id = $1
 		rec.FinishedAt = &t
 	}
 
+	rec.NodeSelector = decodeStringMapJSON(nodeSelectorRaw)
 	rec.Env = decodeStringMapJSON(envRaw)
 	rec.BuildArgs = decodeStringMapJSON(buildArgsRaw)
 
@@ -126,7 +135,7 @@ WHERE deployment_id = $1
 
 func (r *PostgresDeploymentRepository) List() []domain.DeploymentRecord {
 	const query = `
-SELECT deployment_id, requested_by, repo, subdomain, port, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, requested_by, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 ORDER BY started_at DESC
 `
@@ -140,6 +149,7 @@ ORDER BY started_at DESC
 	result := make([]domain.DeploymentRecord, 0)
 	for rows.Next() {
 		var rec domain.DeploymentRecord
+		var nodeSelectorRaw []byte
 		var envRaw []byte
 		var buildArgsRaw []byte
 		var container sql.NullString
@@ -155,6 +165,13 @@ ORDER BY started_at DESC
 			&rec.Repo,
 			&rec.Subdomain,
 			&rec.Port,
+			&rec.ScalingMode,
+			&rec.MinReplicas,
+			&rec.MaxReplicas,
+			&rec.CPUTarget,
+			&rec.CPURequest,
+			&rec.CPULimit,
+			&nodeSelectorRaw,
 			&rec.CPUCores,
 			&rec.MemoryMB,
 			&container,
@@ -192,6 +209,7 @@ ORDER BY started_at DESC
 			rec.FinishedAt = &t
 		}
 
+		rec.NodeSelector = decodeStringMapJSON(nodeSelectorRaw)
 		rec.Env = decodeStringMapJSON(envRaw)
 		rec.BuildArgs = decodeStringMapJSON(buildArgsRaw)
 
@@ -204,10 +222,10 @@ ORDER BY started_at DESC
 func (r *PostgresDeploymentRepository) upsert(rec domain.DeploymentRecord) error {
 	const stmt = `
 INSERT INTO deployments (
-	deployment_id, requested_by, repo, subdomain, port, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+	deployment_id, requested_by, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 )
 VALUES (
-	$1, NULLIF($2, ''), $3, $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), NULLIF($13, ''), $14::jsonb, $15::jsonb, $16, $17
+	$1, NULLIF($2, ''), $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12::jsonb, $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), $18, NULLIF($19, ''), NULLIF($20, ''), $21::jsonb, $22::jsonb, $23, $24
 )
 ON CONFLICT (deployment_id)
 DO UPDATE SET
@@ -215,6 +233,13 @@ DO UPDATE SET
     repo = EXCLUDED.repo,
     subdomain = EXCLUDED.subdomain,
     port = EXCLUDED.port,
+	scaling_mode = EXCLUDED.scaling_mode,
+	min_replicas = EXCLUDED.min_replicas,
+	max_replicas = EXCLUDED.max_replicas,
+	cpu_target_utilization = EXCLUDED.cpu_target_utilization,
+	cpu_request_milli = EXCLUDED.cpu_request_milli,
+	cpu_limit_milli = EXCLUDED.cpu_limit_milli,
+	node_selector = EXCLUDED.node_selector,
 	cpu_cores = EXCLUDED.cpu_cores,
 	memory_mb = EXCLUDED.memory_mb,
     container = EXCLUDED.container,
@@ -229,6 +254,7 @@ DO UPDATE SET
     finished_at = EXCLUDED.finished_at
 `
 
+	nodeSelectorJSON := encodeStringMapJSON(rec.NodeSelector)
 	envJSON := encodeStringMapJSON(rec.Env)
 	buildArgsJSON := encodeStringMapJSON(rec.BuildArgs)
 
@@ -239,6 +265,13 @@ DO UPDATE SET
 		rec.Repo,
 		rec.Subdomain,
 		rec.Port,
+		rec.ScalingMode,
+		rec.MinReplicas,
+		rec.MaxReplicas,
+		rec.CPUTarget,
+		rec.CPURequest,
+		rec.CPULimit,
+		nodeSelectorJSON,
 		rec.CPUCores,
 		rec.MemoryMB,
 		rec.Container,

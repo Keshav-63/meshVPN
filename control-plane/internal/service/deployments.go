@@ -11,6 +11,7 @@ import (
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
 	"MeshVPN-slef-hosting/control-plane/internal/runtime"
 	"MeshVPN-slef-hosting/control-plane/internal/store"
+	"MeshVPN-slef-hosting/control-plane/internal/telemetry"
 
 	"github.com/google/uuid"
 )
@@ -18,14 +19,21 @@ import (
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type DeployRequest struct {
-	Repo        string
-	Port        int
-	Subdomain   string
-	Env         map[string]string
-	BuildArgs   map[string]string
-	CPUCores    float64
-	MemoryMB    int
-	RequestedBy string
+	Repo         string
+	Port         int
+	Subdomain    string
+	ScalingMode  string
+	MinReplicas  int
+	MaxReplicas  int
+	CPUTarget    int
+	CPURequest   int
+	CPULimit     int
+	NodeSelector map[string]string
+	Env          map[string]string
+	BuildArgs    map[string]string
+	CPUCores     float64
+	MemoryMB     int
+	RequestedBy  string
 }
 
 type DeploymentService struct {
@@ -44,6 +52,13 @@ func NewDeploymentService(repo store.DeploymentRepository, jobs store.JobReposit
 
 func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest) (domain.DeploymentRecord, error) {
 	logs.Debugf("service", "enqueue deployment requested_by=%s repo=%s", req.RequestedBy, req.Repo)
+	policy := NewCPUFirstAutoscalingPolicy()
+	normalizedReq, err := policy.Normalize(req)
+	if err != nil {
+		return domain.DeploymentRecord{}, err
+	}
+	req = normalizedReq
+
 	repoURL := strings.TrimSpace(req.Repo)
 	if repoURL == "" {
 		return domain.DeploymentRecord{}, fmt.Errorf("repo is required")
@@ -74,6 +89,11 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 		return domain.DeploymentRecord{}, fmt.Errorf("cpu and memory must be positive")
 	}
 
+	nodeSelector, err := sanitizeEnvMap(req.NodeSelector)
+	if err != nil {
+		return domain.DeploymentRecord{}, fmt.Errorf("invalid node_selector: %w", err)
+	}
+
 	start := time.Now().UTC()
 	record := domain.DeploymentRecord{
 		DeploymentID: deploymentID,
@@ -81,6 +101,13 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 		Repo:         repoURL,
 		Subdomain:    subdomain,
 		Port:         port,
+		ScalingMode:  req.ScalingMode,
+		MinReplicas:  req.MinReplicas,
+		MaxReplicas:  req.MaxReplicas,
+		CPUTarget:    req.CPUTarget,
+		CPURequest:   req.CPURequest,
+		CPULimit:     req.CPULimit,
+		NodeSelector: domain.CloneStringMap(nodeSelector),
 		CPUCores:     req.CPUCores,
 		MemoryMB:     req.MemoryMB,
 		Status:       "queued",
@@ -96,6 +123,13 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 		Repo:         repoURL,
 		Subdomain:    subdomain,
 		Port:         port,
+		ScalingMode:  req.ScalingMode,
+		MinReplicas:  req.MinReplicas,
+		MaxReplicas:  req.MaxReplicas,
+		CPUTarget:    req.CPUTarget,
+		CPURequest:   req.CPURequest,
+		CPULimit:     req.CPULimit,
+		NodeSelector: domain.CloneStringMap(nodeSelector),
 		Env:          domain.CloneStringMap(runtimeEnv),
 		BuildArgs:    domain.CloneStringMap(buildArgs),
 		CPUCores:     req.CPUCores,
@@ -109,6 +143,7 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 		return domain.DeploymentRecord{}, fmt.Errorf("enqueue deployment: %w", err)
 	}
 
+	telemetry.ObserveDeployRequest(req.ScalingMode)
 	logs.Infof("service", "enqueued deployment deployment_id=%s job_id=%s", deploymentID, job.JobID)
 	return record, nil
 }

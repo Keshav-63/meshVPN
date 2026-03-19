@@ -8,6 +8,13 @@ type DeploymentJob struct {
 	Repo         string            `json:"repo"`
 	Subdomain    string            `json:"subdomain"`
 	Port         int               `json:"port"`
+	ScalingMode  string            `json:"scaling_mode,omitempty"`
+	MinReplicas  int               `json:"min_replicas,omitempty"`
+	MaxReplicas  int               `json:"max_replicas,omitempty"`
+	CPUTarget    int               `json:"cpu_target_utilization,omitempty"`
+	CPURequest   int               `json:"cpu_request_milli,omitempty"`
+	CPULimit     int               `json:"cpu_limit_milli,omitempty"`
+	NodeSelector map[string]string `json:"node_selector,omitempty"`
 	Env          map[string]string `json:"env"`
 	BuildArgs    map[string]string `json:"build_args"`
 	CPUCores     float64           `json:"cpu_cores"`
