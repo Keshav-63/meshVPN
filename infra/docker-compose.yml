@@ -17,9 +17,10 @@ services:
       - proxy
 
   control-plane:
-    image: golang:1.26-alpine
-    working_dir: /app
-    command: sh -c "apk add --no-cache git docker-cli && go mod download && go run ./cmd/control-plane"
+    build:
+      context: ../control-plane
+      dockerfile: Dockerfile
+    image: meshvpn-control-plane:local
     environment:
       - APP_BASE_DOMAIN=${APP_BASE_DOMAIN:-localhost}
       - DATABASE_URL=${DATABASE_URL:-}
@@ -28,10 +29,17 @@ services:
       - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
       - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-2s}
       - WORKER_BATCH_SIZE=${WORKER_BATCH_SIZE:-3}
+      - RUNTIME_BACKEND=${RUNTIME_BACKEND:-docker}
+      - ENABLE_CPU_HPA=${ENABLE_CPU_HPA:-false}
+      - K8S_NAMESPACE=${K8S_NAMESPACE:-meshvpn-apps}
+      - K8S_CONFIG_PATH=${K8S_CONFIG_PATH:-/root/.kube/config}
+      - K8S_IMAGE_PREFIX=${K8S_IMAGE_PREFIX:-}
+      - KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
     volumes:
-      - ../control-plane:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - ../apps:/apps
+      - ${K8S_HOST_KUBE_DIR:-/home/keshav/.kube}:/root/.kube:ro
+      - ${K8S_HOST_DOCKER_CONFIG_DIR:-/home/keshav/.docker}:/root/.docker
     depends_on:
       - traefik
     networks:
