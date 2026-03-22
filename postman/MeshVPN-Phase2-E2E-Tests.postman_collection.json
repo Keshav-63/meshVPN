@@ -1,0 +1,729 @@
+{
+	"info": {
+		"_postman_id": "meshvpn-phase2-e2e",
+		"name": "MeshVPN Phase 2 - Complete E2E Tests",
+		"description": "Comprehensive end-to-end testing for MeshVPN including resource packages, analytics, user management, and autoscaling",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Health & Metrics",
+			"item": [
+				{
+					"name": "Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains status\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('status');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Prometheus Metrics",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains Prometheus metrics\", function () {",
+									"    pm.expect(pm.response.text()).to.include('deployment_queue_length');",
+									"    pm.expect(pm.response.text()).to.include('deployment_requests_total');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/metrics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"metrics"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "2. Deployment with Packages",
+			"item": [
+				{
+					"name": "Deploy Small Package (Auto-Subdomain)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 202\", function () {",
+									"    pm.response.to.have.status(202);",
+									"});",
+									"",
+									"pm.test(\"Response contains deployment_id\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('deployment_id');",
+									"    pm.environment.set(\"deployment_id\", jsonData.deployment_id);",
+									"});",
+									"",
+									"pm.test(\"Package is small\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.package).to.eql('small');",
+									"    pm.expect(jsonData.cpu_cores).to.eql(0.5);",
+									"    pm.expect(jsonData.memory_mb).to.eql(512);",
+									"});",
+									"",
+									"pm.test(\"Subdomain auto-generated\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.subdomain).to.exist;",
+									"    pm.expect(jsonData.url).to.include(jsonData.subdomain);",
+									"});",
+									"",
+									"pm.test(\"Autoscaling disabled for non-subscriber\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.autoscaling_enabled).to.be.false;",
+									"    pm.expect(jsonData.scaling_mode).to.eql('none');",
+									"    pm.expect(jsonData.max_replicas).to.eql(1);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/vercel/next.js\",\n  \"package\": \"small\",\n  \"port\": 3000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Deploy Medium Package (Custom Subdomain)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 202\", function () {",
+									"    pm.response.to.have.status(202);",
+									"});",
+									"",
+									"pm.test(\"Package is medium\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.package).to.eql('medium');",
+									"    pm.expect(jsonData.cpu_cores).to.eql(1.0);",
+									"    pm.expect(jsonData.memory_mb).to.eql(1024);",
+									"});",
+									"",
+									"pm.test(\"Custom subdomain used\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.subdomain).to.eql('node-app');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/nodejs/node\",\n  \"package\": \"medium\",\n  \"port\": 8080,\n  \"subdomain\": \"node-app\",\n  \"env\": {\n    \"NODE_ENV\": \"production\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Deploy Large Package",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 202\", function () {",
+									"    pm.response.to.have.status(202);",
+									"});",
+									"",
+									"pm.test(\"Package is large\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.package).to.eql('large');",
+									"    pm.expect(jsonData.cpu_cores).to.eql(2.0);",
+									"    pm.expect(jsonData.memory_mb).to.eql(2048);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/python/cpython\",\n  \"package\": \"large\",\n  \"port\": 5000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Deploy Invalid Package (Should Fail)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error message for invalid package\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.error).to.include('invalid package');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/test/test\",\n  \"package\": \"xlarge\",\n  \"port\": 3000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Deploy Default Package (No Package Specified)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 202\", function () {",
+									"    pm.response.to.have.status(202);",
+									"});",
+									"",
+									"pm.test(\"Defaults to small package\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.package).to.eql('small');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/test/default-package\",\n  \"port\": 3000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "3. Deployment Management",
+			"item": [
+				{
+					"name": "List All Deployments",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains deployments array\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('deployments');",
+									"    pm.expect(jsonData.deployments).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Deployments include package field\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.deployments.length > 0) {",
+									"        pm.expect(jsonData.deployments[0]).to.have.property('package');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/deployments",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deployments"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Build Logs",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains build_logs\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('build_logs');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/deployments/{{deployment_id}}/build-logs",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deployments",
+								"{{deployment_id}}",
+								"build-logs"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get App Logs (Default Tail)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains application_logs\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('application_logs');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/deployments/{{deployment_id}}/app-logs",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deployments",
+								"{{deployment_id}}",
+								"app-logs"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get App Logs (Custom Tail)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Tail parameter is respected\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.tail).to.eql(50);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/deployments/{{deployment_id}}/app-logs?tail=50",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deployments",
+								"{{deployment_id}}",
+								"app-logs"
+							],
+							"query": [
+								{
+									"key": "tail",
+									"value": "50"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "4. Analytics API",
+			"item": [
+				{
+					"name": "Get Analytics Snapshot",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains deployment and metrics\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData).to.have.property('deployment');",
+									"    pm.expect(jsonData).to.have.property('metrics');",
+									"});",
+									"",
+									"pm.test(\"Metrics include all categories\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    var metrics = jsonData.metrics;",
+									"    pm.expect(metrics).to.have.property('requests');",
+									"    pm.expect(metrics).to.have.property('latency');",
+									"    pm.expect(metrics).to.have.property('bandwidth');",
+									"    pm.expect(metrics).to.have.property('pods');",
+									"    pm.expect(metrics).to.have.property('resources');",
+									"});",
+									"",
+									"pm.test(\"Request metrics structure\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    var requests = jsonData.metrics.requests;",
+									"    pm.expect(requests).to.have.property('total');",
+									"    pm.expect(requests).to.have.property('last_hour');",
+									"    pm.expect(requests).to.have.property('last_24h');",
+									"    pm.expect(requests).to.have.property('per_second');",
+									"});",
+									"",
+									"pm.test(\"Latency percentiles exist\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    var latency = jsonData.metrics.latency;",
+									"    pm.expect(latency).to.have.property('p50_ms');",
+									"    pm.expect(latency).to.have.property('p90_ms');",
+									"    pm.expect(latency).to.have.property('p99_ms');",
+									"});",
+									"",
+									"pm.test(\"Pod status matches package\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    var pods = jsonData.metrics.pods;",
+									"    pm.expect(pods.current).to.be.a('number');",
+									"    pm.expect(pods.desired).to.be.a('number');",
+									"    ",
+									"    // Non-subscribers should have desired = 1",
+									"    if (jsonData.deployment.scaling_mode === 'none') {",
+									"        pm.expect(pods.desired).to.eql(1);",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/deployments/{{deployment_id}}/analytics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deployments",
+								"{{deployment_id}}",
+								"analytics"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Analytics for Non-Existent Deployment",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});",
+									"",
+									"pm.test(\"Error message for not found\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.error).to.include('not found');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/deployments/nonexistent123/analytics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deployments",
+								"nonexistent123",
+								"analytics"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "5. Subdomain Testing",
+			"item": [
+				{
+					"name": "Deploy with Subdomain A",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 202\", function () {",
+									"    pm.response.to.have.status(202);",
+									"});",
+									"",
+									"pm.test(\"Subdomain is my-unique-app\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.subdomain).to.eql('my-unique-app');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/test/app1\",\n  \"subdomain\": \"my-unique-app\",\n  \"package\": \"small\",\n  \"port\": 3000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Deploy with Same Subdomain (Should Fail)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test(\"Error message for subdomain conflict\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.error).to.include('already in use');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"repo\": \"https://github.com/test/app2\",\n  \"subdomain\": \"my-unique-app\",\n  \"package\": \"small\",\n  \"port\": 3000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/deploy",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"deploy"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "deployment_id",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

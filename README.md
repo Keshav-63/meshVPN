@@ -1,187 +1,318 @@
-# MeshVPN Self-Hosting POC
+# MeshVPN Self-Hosting Platform
 
-This Phase 1-3 proof of concept turns the control plane into a small deployment engine:
+**Current Architecture**: Windows → WSL2 (Debian) → K3D → Cloudflare Tunnel
 
-1. Receive a deployment request over HTTP.
-2. Clone a Git repository into `apps/`.
-3. Build a Docker image from that repository.
-4. Run the container on a shared Traefik network.
-5. Route `<subdomain>.localhost` to the deployed app.
+A complete self-hosting platform that turns your laptop into a deployment engine with Kubernetes orchestration:
 
-## Why each piece exists
+1. **Choose a package** (Small/Medium/Large) for simple resource allocation
+2. **Auto-generate subdomains** from GitHub repo names with conflict detection
+3. **Clone & build** Git repositories into Docker images
+4. **Push to GHCR** (GitHub Container Registry) with automatic authentication
+5. **Deploy to K3D** Kubernetes cluster with autoscaling (subscribers)
+6. **Monitor with analytics** - real-time metrics via REST API and Server-Sent Events (SSE)
+7. **Route traffic** via `<subdomain>.keshavstack.tech` through Cloudflare Tunnel
 
-- `control-plane/`: the API that accepts deployment requests and orchestrates clone/build/run.
-- `apps/`: local checkout area for cloned repositories.
-- `infra/docker-compose.yml`: runs Traefik, which gives you stable hostnames instead of random high ports.
-- `worker/`: reserved for a later async worker; in this POC the control plane does the work synchronously.
+## Quick Start
 
-## Prerequisites
+### 🚀 New User? Start Here!
 
-- Go installed and available in `PATH`
-- Git installed and available in `PATH`
+**15-minute setup with minimal resources (~800-1300 MB RAM):**
+
+👉 **[QUICK-START.md](QUICK-START.md)** - Fast track to get running
+
+### 🔄 Clean Installation from Scratch
+
+**Have previous setup? Start fresh:**
+
+👉 **[Fresh Installation Guide](docs/FRESH-INSTALL.md)** - Complete cleanup and reinstall
+
+Quick cleanup:
+```bash
+./scripts/cleanup-all.sh
+```
+
+### 📚 Detailed Setup Guide
+
+**Comprehensive documentation:**
+
+👉 **[Complete Setup Guide](docs/SETUP.md)** - Full installation and configuration
+
+## Architecture Components
+
+- `control-plane/`: Go API that orchestrates deployments with async worker queue
+- `worker-agent/`: Distributed worker binary for remote deployment machines (Tailscale-based)
+- `apps/`: Local checkout area for cloned repositories
+- `infra/docker-compose.yml`: Runs Cloudflare Tunnel
+- `infra/observability/`: Lean Prometheus + Grafana stack (350MB limit)
+- `scripts/`: Cloudflare Tunnel automation scripts
+
+## Features
+
+### 🔧 Core Deployment Features
+
+- **Resource Packages**: Small (0.5 CPU / 512MB), Medium (1 CPU / 1GB), Large (2 CPU / 2GB)
+- **Auto-Subdomain Generation**: Extracts from GitHub repo names with conflict resolution
+- **Kubernetes Orchestration**: Full K8s deployment with services and ingress
+- **Container Registry**: Automatic push to GHCR (GitHub Container Registry)
+- **Real-time Logs**: Stream build logs and application logs via REST API
+- **Autoscaling**: Horizontal Pod Autoscaler (HPA) for subscribers
+
+### 🌐 Multi-Worker Distributed System
+
+**NEW:** Deploy across multiple machines using Tailscale mesh network!
+
+- **Control-Plane as Worker**: Hybrid mode - coordinator can also run deployments locally
+- **Remote Workers**: Add worker agents on laptops, servers, or cloud VMs
+- **Smart Job Placement**:
+  - Small packages → Control-plane (fast, local)
+  - Medium/Large → Remote workers (offload heavy work)
+  - Automatic fallback if workers busy
+- **Worker Health Monitoring**: Heartbeat tracking, auto-mark offline workers
+- **Load Distribution**: Balance workload across multiple workers
+- **Tailscale Integration**: Secure mesh network for worker connectivity
+
+👉 **[Worker Registration Guide](WORKER-REGISTRATION-GUIDE.md)** - Complete step-by-step worker setup ⭐ **START HERE**
+👉 **[Quick Multi-Worker Start](QUICK-MULTI-WORKER.md)** - Fast setup with your actual IPs
+👉 **[Multi-Worker Setup Guide](docs/MULTI-WORKER-SETUP.md)** - Complete distributed deployment setup
+
+### 📊 Analytics & Monitoring
+
+- **Real-time Metrics**: Request counts, latency percentiles (p50/p90/p99), bandwidth
+- **Server-Sent Events (SSE)**: Live analytics streaming to frontend
+- **Prometheus Integration**: Platform-wide metrics collection
+- **Grafana Dashboards**: Platform overview and per-deployment analytics
+- **Pod Tracking**: Monitor which worker/cluster runs each deployment
+
+👉 **[Analytics Quick Start](ANALYTICS-QUICK-START.md)** - View metrics in 3 ways (REST API, SSE, Grafana)
+👉 **[Complete Analytics Guide](ANALYTICS-COMPLETE-GUIDE.md)** - Full setup with frontend integration
+
+## System Requirements
+
+### Windows Host
+- Windows 10/11 with WSL2 enabled
 - Docker Desktop installed and running
 
-This machine already has Go, Git, and Docker CLI installed. Docker Desktop still needs to be started before deployments will work.
+### WSL2 (Debian)
+- Go 1.21+
+- Git
+- kubectl
+- K3D
+- Docker CLI (via Docker Desktop)
 
-## Why the request includes `port`
+### External Services
+- Cloudflare account (for tunnel and domain)
+- GitHub Container Registry access
+- Supabase or PostgreSQL database
 
-Traefik must know which port the application listens on inside its container. Many web apps use `3000`, but some use `80`, `8080`, or something else. The `port` field lets the control plane tell Traefik the correct target.
+**Detailed installation instructions**: [docs/SETUP.md](docs/SETUP.md)
 
-## Run the POC (Localhost)
+## How It Works
 
-1. Start Docker Desktop.
-2. Start Traefik:
+### Deployment Flow
 
-   ```powershell
-   cd infra
-   docker compose up -d
-   ```
+1. **User submits deploy request** → Control-plane API (via Cloudflare Tunnel)
+2. **Worker picks up job** → Clone repo, build image, push to GHCR
+3. **K3D deployment** → Create Kubernetes resources (Deployment, Service, Ingress, HPA)
+4. **Cloudflare routes traffic** → `*.keshavstack.tech` → K3D Traefik → App pods
 
-3. Start the Go API:
+### Key Architectural Decisions
 
-   ```powershell
-   cd control-plane
-   go run ./cmd/control-plane
-   ```
+- **K3D instead of native K3s**: Avoids WSL2 cgroup crash loops
+- **host.docker.internal routing**: Bridges Docker Desktop's WSL2 VM networking
+- **3-tier package system**: Simplifies resource selection (Small/Medium/Large)
+- **Subscription-based autoscaling**: HPA only for subscribers, free tier gets fixed replicas
+- **Auto-subdomain generation**: Extracted from GitHub repo names with conflict detection
+- **PostgreSQL analytics**: 1-minute aggregation with Server-Sent Events (SSE) streaming
+- **ServiceAccount imagePullSecrets**: Universal fix for GHCR authentication
+- **Auto-provisioned Grafana**: Dashboards and datasources configured automatically
 
-4. Check health:
+## Quick Deploy Example
 
-   ```powershell
-   curl http://localhost:8080/health
-   ```
+```bash
+# Health check
+curl https://self.keshavstack.tech/health
 
-5. Deploy a repo that contains a root-level `Dockerfile`:
+# Deploy an app with Medium package
+curl -X POST https://self.keshavstack.tech/deploy \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repo": "https://github.com/your-org/your-app.git",
+    "package": "medium",
+    "port": 3000
+  }'
 
-   ```powershell
-   curl -X POST http://localhost:8080/deploy ^
-     -H "Content-Type: application/json" ^
-     -d "{\"repo\":\"https://github.com/your-org/your-app.git\",\"port\":3000,\"subdomain\":\"demo\"}"
-   ```
+# Subdomain auto-generated from repo name: your-app.keshavstack.tech
+# Package provides: 1 CPU core, 1GB RAM, max 5 replicas (if subscriber)
 
-6. Open the deployed app at `http://demo.localhost`.
-
-7. Open the Traefik dashboard at `http://localhost:8081`.
-
-## Run With Cloudflare Tunnel (Public)
-
-1. Copy `infra/.env.example` to `infra/.env` and set:
-   - `CLOUDFLARE_TUNNEL_TOKEN=<your token>`
-   - `APP_BASE_DOMAIN=keshavstack.tech`
-
-2. In Cloudflare Zero Trust, for your named tunnel, add these Public Hostnames:
-   - `self.keshavstack.tech` -> `http://control-plane:8080`
-   - `*.keshavstack.tech` -> `http://traefik:80`
-
-   This is required because `cloudflared` runs inside Docker, where `localhost` means the `cloudflared` container itself.
-
-3. Start the full stack:
-
-   ```powershell
-   cd infra
-   docker compose --env-file .env up -d
-   ```
-
-4. Verify control plane:
-
-   ```powershell
-   curl https://self.keshavstack.tech/health
-   ```
-
-5. Deploy an app with a chosen subdomain:
-
-   ```powershell
-   curl -X POST https://self.keshavstack.tech/deploy ^
-     -H "Content-Type: application/json" ^
-     -d "{\"repo\":\"https://github.com/your-org/your-app.git\",\"port\":3000,\"subdomain\":\"projectname\"}"
-   ```
-
-6. Access deployed app at:
-   - `https://projectname.keshavstack.tech`
-
-## Build Logs And App Logs API
-
-The deploy API now stores build logs and exposes container runtime logs.
-
-### Deploy with runtime env and build args
-
-Use `env` for container runtime environment variables and `build_args` for Docker build-time arguments.
-
-```powershell
-curl -X POST https://self.keshavstack.tech/deploy ^
-   -H "Content-Type: application/json" ^
-   -d "{\"repo\":\"https://github.com/your-org/your-app.git\",\"port\":3000,\"subdomain\":\"projectname\",\"env\":{\"API_URL\":\"https://api.example.com\",\"NODE_ENV\":\"production\"},\"build_args\":{\"NEXT_PUBLIC_API_BASE\":\"https://api.example.com\"}}"
-```
-
-Response now includes `build_logs`.
-
-### Read deployment history
-
-```powershell
+# Check deployment status
 curl https://self.keshavstack.tech/deployments
+
+# View real-time analytics
+curl https://self.keshavstack.tech/deployments/{id}/analytics \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-### Read build logs by deployment id
+## Environment Configuration
 
-```powershell
-curl https://self.keshavstack.tech/deployments/<deployment_id>/build-logs
+### 1. Cloudflare Tunnel Setup
+
+Use the automated script:
+
+```bash
+cd scripts
+# Edit setup-cloudflare-tunnel.go with your API credentials
+go run setup-cloudflare-tunnel.go
 ```
 
-### Read application logs by deployment id
+The script will:
+- Create tunnel "MeshVPN_SelfHosting"
+- Set up `*.keshavstack.tech` → `http://host.docker.internal:80`
+- Set up `self.keshavstack.tech` → `http://host.docker.internal:8080`
+- Generate tunnel token for docker-compose
 
-```powershell
-curl "https://self.keshavstack.tech/deployments/<deployment_id>/app-logs?tail=300"
+**Why host.docker.internal?** Docker Desktop creates a separate VM for WSL2. This bridges the networking gap.
+
+### 2. Environment Variables
+
+Copy `.env.example` to `.env` (at project root) and configure:
+
+```env
+CLOUDFLARE_TUNNEL_TOKEN=<from_setup_script>
+APP_BASE_DOMAIN=keshavstack.tech
+DATABASE_URL=<your_postgres_url>
+SUPABASE_JWT_SECRET=<your_jwt_secret>
+RUNTIME_BACKEND=k3s
+ENABLE_CPU_HPA=true
+K8S_NAMESPACE=meshvpn-apps
+K8S_IMAGE_PREFIX=ghcr.io/your-github-username
 ```
 
-`tail` is optional and defaults to `200`.
+**Complete setup guide**: [docs/SETUP.md](docs/SETUP.md)
 
-### Dockerfile note for build args
+## API Endpoints
 
-Build args work only if the target Dockerfile declares matching `ARG` keys.
+### Deployment Management
 
-```dockerfile
-ARG NEXT_PUBLIC_API_BASE
-ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+```bash
+# Health check
+GET /health
+
+# Prometheus metrics
+GET /metrics
+
+# Submit deployment (returns 202 Accepted with status: "queued")
+POST /deploy
+{
+  "repo": "https://github.com/user/repo.git",
+  "package": "medium",              // small, medium, or large (default: small)
+  "port": 3000,
+  "subdomain": "myapp",             // optional - auto-generated from repo if not provided
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "build_args": {
+    "NEXT_PUBLIC_API_BASE": "https://api.example.com"
+  }
+}
+
+# List all deployments
+GET /deployments
+
+# Get build logs
+GET /deployments/<deployment_id>/build-logs
+
+# Get application logs (tail optional, default 200)
+GET /deployments/<deployment_id>/app-logs?tail=300
+
+# Get deployment analytics (snapshot)
+GET /deployments/<deployment_id>/analytics
+
+# Stream real-time analytics (SSE)
+GET /deployments/<deployment_id>/analytics/stream
 ```
 
-## Current POC limits
+**Documentation**:
+- [Frontend API Integration](docs/frontend-api-integration.md) - API integration guide
+- [Analytics API](docs/ANALYTICS-API.md) - Real-time metrics and SSE streaming
+- [Packages](docs/PACKAGES.md) - Resource package specifications
 
-- The repo must have a `Dockerfile` in its root.
-- The deploy endpoint is synchronous, so large builds will keep the HTTP request open.
-- There is no persistence layer yet, so deployment state only exists in Docker and the local filesystem.
-- There is no cleanup endpoint yet.
+## Features
 
-Those limits are normal for this stage. They are the reason a later worker, job queue, and database layer will exist.
+### Current Implementation
 
-## Phase 1 Backend Infra (Implemented)
+✅ **Resource Packages**: 3-tier system (Small/Medium/Large) for easy resource selection
+✅ **Auto-Subdomain Generation**: Extracted from GitHub repo names with conflict detection
+✅ **Subscription-Based Autoscaling**: HPA enabled for subscribers (fixed replicas for free tier)
+✅ **Real-time Analytics**: REST API + Server-Sent Events (SSE) for live metrics
+✅ **Deployment Metrics**: Request counts, latency percentiles (p50/p90/p99), bandwidth, pod status
+✅ **User Tracking**: PostgreSQL-based user management with subscription tiers
+✅ **Async Deployment Queue**: Background worker processes deployments
+✅ **Kubernetes Orchestration**: K3D-based container scheduling
+✅ **Build & Runtime Logs**: Complete visibility into deployment process
+✅ **Cloudflare Tunnel**: Secure public access without port forwarding
+✅ **GitHub Container Registry**: Automated image push/pull
+✅ **Observability**: Prometheus metrics + Grafana dashboards (auto-provisioned)
+✅ **Supabase Auth**: JWT-based authentication (GitHub OAuth)
+✅ **Database Persistence**: PostgreSQL/Supabase for deployment state and analytics
 
-The control plane now includes:
+### Resource Packages
 
-- Supabase JWT auth middleware (GitHub provider only).
-- Async deployment queue with background worker.
-- Postgres/Supabase migrations for org/project/deployments/logs/analytics tables.
+| Package | CPU Cores | Memory | Max Replicas | Best For |
+|---------|-----------|--------|--------------|----------|
+| Small   | 0.5       | 512 MB | 3            | Static sites, simple APIs |
+| Medium  | 1.0       | 1 GB   | 5            | Web apps, microservices |
+| Large   | 2.0       | 2 GB   | 10           | Resource-intensive apps |
 
-### New environment variables
+**Autoscaling**: Subscribers get horizontal pod autoscaling (HPA) based on CPU usage. Non-subscribers run 1 fixed replica.
 
-- `DATABASE_URL` or `SUPABASE_DB_URL`: Postgres connection string.
-- `SUPABASE_JWT_SECRET`: JWT secret from Supabase project settings.
-- `REQUIRE_AUTH`: `true` (default) or `false` for local debugging.
-- `WORKER_POLL_INTERVAL`: e.g. `2s`.
-- `WORKER_BATCH_SIZE`: reserved for next worker optimization phase.
+See [PACKAGES.md](docs/PACKAGES.md) for complete specifications.
 
-Set these in `infra/.env` (copy from `infra/.env.example`), then run:
+### Deployment Requirements
 
-```powershell
-cd infra
-docker compose --env-file .env up -d
-```
+- Repository must have a `Dockerfile` in its root
+- Docker build must succeed
+- Application must listen on the specified port
 
-### Deploy API behavior change
+## Documentation
 
-`POST /deploy` now returns `202 Accepted` with `status: queued`.
-The background worker performs clone/build/run and updates deployment status to `deploying`, then `running` or `failed`.
+### Setup & Configuration
+- **[Complete Setup Guide](docs/SETUP.md)** - Full installation and configuration for K3D + WSL2
+- **[Analytics API](docs/ANALYTICS-API.md)** - Real-time metrics, SSE streaming, and frontend integration
+- **[Resource Packages](docs/PACKAGES.md)** - Package specifications and autoscaling behavior
+- **[Grafana Setup](docs/GRAFANA-SETUP.md)** - Platform monitoring dashboards and customization
+- **[Frontend API Integration](docs/frontend-api-integration.md)** - How to integrate with the control-plane API
 
-## Postman Testing
+### Testing
+- **[End-to-End Testing Guide](docs/E2E-TESTING.md)** - Comprehensive testing procedures for all features
+- **[Postman Collection](postman/)** - Pre-built Postman tests with environment files
+- **[Automated Test Script](scripts/test-e2e.sh)** - CLI-based testing script
 
-Complete Phase 1 Postman flow is documented in:
+### Architecture Details
+- **K3D Cluster**: Lightweight K3s running in Docker (avoids WSL2 cgroup issues)
+- **Networking**: Cloudflare Tunnel with `host.docker.internal` routing
+- **Registry**: GitHub Container Registry with ServiceAccount authentication
+- **Observability**: Lean Prometheus + Grafana (350MB total) with auto-provisioned dashboards
+- **Analytics**: PostgreSQL-backed metrics collection with 1-minute aggregation
+- **Packages**: 3-tier resource system (Small/Medium/Large) with subscriber-based autoscaling
 
-- `docs/postman-phase1-api-testing.md`
+## Troubleshooting
+
+### Common Issues
+
+**ImagePullBackOff**
+- Verify `ghcr-secret` exists: `kubectl get secret ghcr-secret -n meshvpn-apps`
+- Check ServiceAccount has imagePullSecrets: `kubectl get sa default -n meshvpn-apps -o yaml`
+- Re-authenticate with GHCR: `docker login ghcr.io`
+
+**HPA Not Scaling**
+- Check metrics-server is running (included in K3D by default)
+- Verify pod resource requests are set
+- Inspect HPA: `kubectl describe hpa <name> -n meshvpn-apps`
+
+**Cloudflare 502 Errors**
+- Check tunnel container: `docker logs cloudflared`
+- Verify routes use `host.docker.internal` not `localhost`
+- Restart tunnel: `cd infra && docker compose restart cloudflared`
+
+**See full troubleshooting guide**: [docs/SETUP.md#troubleshooting](docs/SETUP.md#troubleshooting)

@@ -1,0 +1,9 @@
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS scaling_mode TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS min_replicas INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS max_replicas INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS cpu_target_utilization INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS cpu_request_milli INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS cpu_limit_milli INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS node_selector JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_deployments_scaling_mode ON deployments(scaling_mode);

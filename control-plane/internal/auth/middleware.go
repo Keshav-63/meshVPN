@@ -6,15 +6,22 @@ import (
 	"strings"
 	"time"
 
+	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type UserRepository interface {
+	GetByID(userID string) (domain.User, error)
+	Upsert(user domain.User) error
+}
+
 type MiddlewareConfig struct {
 	JWTSecret   string
 	RequireAuth bool
+	UserRepo    UserRepository
 }
 
 type Claims struct {
@@ -94,6 +101,32 @@ func RequireSupabaseGitHub(cfg MiddlewareConfig) gin.HandlerFunc {
 		c.Set("auth.sub", claims.Sub)
 		c.Set("auth.email", claims.Email)
 		c.Set("auth.provider", provider)
+
+		// Load user from database or create if first login
+		if cfg.UserRepo != nil {
+			user, err := cfg.UserRepo.GetByID(claims.Sub)
+			if err != nil {
+				// User doesn't exist, create new user (first login)
+				logs.Infof("auth", "creating new user sub=%s email=%s", claims.Sub, claims.Email)
+				user = domain.User{
+					UserID:       claims.Sub,
+					Email:        claims.Email,
+					Provider:     provider,
+					IsSubscriber: false, // Default to free tier
+				}
+				if upsertErr := cfg.UserRepo.Upsert(user); upsertErr != nil {
+					logs.Errorf("auth", "failed to create user: %v", upsertErr)
+					c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to initialize user"})
+					return
+				}
+			}
+
+			// Set user object and subscription status in context
+			c.Set("auth.user", user)
+			c.Set("auth.is_subscriber", user.IsSubscriber)
+			logs.Debugf("auth", "loaded user sub=%s is_subscriber=%t", user.UserID, user.IsSubscriber)
+		}
+
 		c.Next()
 	}
 }

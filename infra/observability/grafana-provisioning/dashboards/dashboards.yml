@@ -1,0 +1,5 @@
+apiVersion: 1
+
+# Dashboard provisioning will be added later
+# For now, dashboards can be created manually in Grafana UI
+providers: []

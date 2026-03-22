@@ -1,0 +1,6 @@
+scrape_configs:
+  - job_name: 'control-plane'
+    scrape_interval: 5s
+    static_configs:
+      # Scrape via socat proxy forwarding to WSL2 localhost
+      - targets: ['control-plane-proxy:8080']

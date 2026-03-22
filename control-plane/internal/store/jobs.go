@@ -19,6 +19,12 @@ type JobRepository interface {
 	ClaimNext(ctx context.Context) (domain.DeploymentJob, error)
 	MarkDone(ctx context.Context, jobID string) error
 	MarkFailed(ctx context.Context, jobID string, errText string) error
+
+	// Multi-worker methods
+	AssignToWorker(ctx context.Context, jobID, workerID string) error
+	ReleaseFromWorker(ctx context.Context, jobID string) error
+	ClaimForWorker(ctx context.Context, workerID string) (domain.DeploymentJob, error)
+	GetNextUnassignedJob(ctx context.Context) (domain.DeploymentJob, error)
 }
 
 type InMemoryJobRepository struct {
@@ -56,6 +62,23 @@ func (r *InMemoryJobRepository) MarkDone(_ context.Context, _ string) error {
 
 func (r *InMemoryJobRepository) MarkFailed(_ context.Context, _ string, _ string) error {
 	return nil
+}
+
+// Multi-worker methods (not implemented for in-memory store)
+func (r *InMemoryJobRepository) AssignToWorker(_ context.Context, _ string, _ string) error {
+	return errors.New("AssignToWorker not implemented for in-memory store")
+}
+
+func (r *InMemoryJobRepository) ReleaseFromWorker(_ context.Context, _ string) error {
+	return errors.New("ReleaseFromWorker not implemented for in-memory store")
+}
+
+func (r *InMemoryJobRepository) ClaimForWorker(_ context.Context, _ string) (domain.DeploymentJob, error) {
+	return domain.DeploymentJob{}, errors.New("ClaimForWorker not implemented for in-memory store")
+}
+
+func (r *InMemoryJobRepository) GetNextUnassignedJob(_ context.Context) (domain.DeploymentJob, error) {
+	return domain.DeploymentJob{}, errors.New("GetNextUnassignedJob not implemented for in-memory store")
 }
 
 type PostgresJobRepository struct {
@@ -138,4 +161,110 @@ func (r *PostgresJobRepository) MarkFailed(ctx context.Context, jobID string, er
 	logs.Debugf("jobs-postgres", "mark failed job_id=%s", jobID)
 	_, err := r.db.ExecContext(ctx, q, jobID, errText)
 	return err
+}
+
+// Multi-worker methods
+
+// AssignToWorker assigns a queued job to a specific worker
+func (r *PostgresJobRepository) AssignToWorker(ctx context.Context, jobID, workerID string) error {
+	const q = `
+UPDATE deployment_jobs
+SET assigned_worker_id = $1, assigned_at = NOW()
+WHERE job_id = $2 AND status = 'queued'
+`
+	logs.Debugf("jobs-postgres", "assign job to worker job_id=%s worker_id=%s", jobID, workerID)
+	_, err := r.db.ExecContext(ctx, q, workerID, jobID)
+	return err
+}
+
+// ReleaseFromWorker clears the worker assignment from a job
+func (r *PostgresJobRepository) ReleaseFromWorker(ctx context.Context, jobID string) error {
+	const q = `
+UPDATE deployment_jobs
+SET assigned_worker_id = NULL, assigned_at = NULL
+WHERE job_id = $1
+`
+	logs.Debugf("jobs-postgres", "release job from worker job_id=%s", jobID)
+	_, err := r.db.ExecContext(ctx, q, jobID)
+	return err
+}
+
+// ClaimForWorker claims the next job assigned to a specific worker
+func (r *PostgresJobRepository) ClaimForWorker(ctx context.Context, workerID string) (domain.DeploymentJob, error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return domain.DeploymentJob{}, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	const q = `
+WITH picked AS (
+  SELECT job_id
+  FROM deployment_jobs
+  WHERE status = 'queued' AND assigned_worker_id = $1
+  ORDER BY queued_at ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE deployment_jobs j
+SET status = 'running', started_at = NOW(), attempts = attempts + 1
+FROM picked
+WHERE j.job_id = picked.job_id
+RETURNING j.job_id, j.payload
+`
+
+	var jobID string
+	var payloadRaw []byte
+	err = tx.QueryRowContext(ctx, q, workerID).Scan(&jobID, &payloadRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.DeploymentJob{}, ErrNoQueuedJobs
+	}
+	if err != nil {
+		return domain.DeploymentJob{}, err
+	}
+
+	var job domain.DeploymentJob
+	if err := json.Unmarshal(payloadRaw, &job); err != nil {
+		return domain.DeploymentJob{}, fmt.Errorf("decode job payload: %w", err)
+	}
+	job.JobID = jobID
+
+	if err := tx.Commit(); err != nil {
+		return domain.DeploymentJob{}, err
+	}
+	logs.Debugf("jobs-postgres", "claimed job for worker job_id=%s worker_id=%s", job.JobID, workerID)
+
+	return job, nil
+}
+
+// GetNextUnassignedJob retrieves the oldest queued job without a worker assignment
+func (r *PostgresJobRepository) GetNextUnassignedJob(ctx context.Context) (domain.DeploymentJob, error) {
+	const q = `
+SELECT job_id, payload
+FROM deployment_jobs
+WHERE status = 'queued' AND (assigned_worker_id IS NULL OR assigned_worker_id = '')
+ORDER BY queued_at ASC
+LIMIT 1
+`
+	var jobID string
+	var payloadRaw []byte
+
+	err := r.db.QueryRowContext(ctx, q).Scan(&jobID, &payloadRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.DeploymentJob{}, ErrNoQueuedJobs
+	}
+	if err != nil {
+		return domain.DeploymentJob{}, err
+	}
+
+	var job domain.DeploymentJob
+	if err := json.Unmarshal(payloadRaw, &job); err != nil {
+		return domain.DeploymentJob{}, fmt.Errorf("decode job payload: %w", err)
+	}
+	job.JobID = jobID
+
+	logs.Debugf("jobs-postgres", "found unassigned job job_id=%s", job.JobID)
+	return job, nil
 }
