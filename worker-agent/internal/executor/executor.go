@@ -42,7 +42,7 @@ func (e *JobExecutor) executeKubernetes(ctx context.Context, deploymentID, repo,
 	}
 
 	// Step 2: Build Docker image
-	imageName := fmt.Sprintf("ghcr.io/<your-org>/%s:latest", deploymentID)
+	imageName := fmt.Sprintf("%s/%s:latest", e.runtime.ImagePrefix, deploymentID)
 	log.Printf("Building image: %s", imageName)
 	if err := e.buildImage(deploymentID, imageName); err != nil {
 		return fmt.Errorf("build image: %w", err)

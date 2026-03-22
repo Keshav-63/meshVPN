@@ -153,11 +153,11 @@ fi
 # Get control-plane IP
 echo ""
 echo "Enter the control-plane Tailscale IP address:"
-echo "(Default: 100.107.233.70)"
+echo "(Default: 100.88.151.60)"
 read -p "Control-plane IP: " CONTROL_PLANE_IP
 
 if [ -z "$CONTROL_PLANE_IP" ]; then
-    CONTROL_PLANE_IP="100.107.233.70"
+    CONTROL_PLANE_IP="100.88.151.60"
 fi
 
 # Test connection to control-plane

@@ -18,8 +18,8 @@ worker:
 
 control_plane:
   # Control-plane URL (use Tailscale IP or domain)
-  # Control-plane Tailscale IP: 100.107.233.70
-  url: http://100.107.233.70:8080
+  # Control-plane Tailscale IP: 100.88.151.60
+  url: http://100.88.151.60:8080
 
   # Shared secret for authentication (must match WORKER_SHARED_SECRET in control-plane .env)
   shared_secret: "meshvpn-worker-secret-change-in-production"
@@ -38,6 +38,11 @@ runtime:
 
   # Path to kubectl binary (usually just "kubectl" if in PATH)
   kubectl_bin: kubectl
+
+  # Docker image registry prefix (REQUIRED)
+  # Use your GitHub username or organization
+  # Example: ghcr.io/keshav-63
+  image_prefix: ghcr.io/keshav-63
 
 capabilities:
   # Total memory available on this worker (GB)

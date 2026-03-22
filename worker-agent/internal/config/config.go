@@ -27,10 +27,11 @@ type ControlPlaneConfig struct {
 }
 
 type RuntimeConfig struct {
-	Type       string `yaml:"type"` // kubernetes, docker
-	Kubeconfig string `yaml:"kubeconfig"`
-	Namespace  string `yaml:"namespace"`
-	KubectlBin string `yaml:"kubectl_bin"`
+	Type        string `yaml:"type"` // kubernetes, docker
+	Kubeconfig  string `yaml:"kubeconfig"`
+	Namespace   string `yaml:"namespace"`
+	KubectlBin  string `yaml:"kubectl_bin"`
+	ImagePrefix string `yaml:"image_prefix"` // e.g., ghcr.io/keshav-63
 }
 
 type Capabilities struct {
@@ -62,6 +63,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Runtime.Type == "" {
 		cfg.Runtime.Type = "kubernetes"
+	}
+	if cfg.Runtime.ImagePrefix == "" {
+		return nil, fmt.Errorf("runtime.image_prefix is required (e.g., ghcr.io/your-username)")
 	}
 
 	return &cfg, nil
