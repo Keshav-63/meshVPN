@@ -40,10 +40,51 @@ Quick cleanup:
 ## Architecture Components
 
 - `control-plane/`: Go API that orchestrates deployments with async worker queue
+- `worker-agent/`: Distributed worker binary for remote deployment machines (Tailscale-based)
 - `apps/`: Local checkout area for cloned repositories
 - `infra/docker-compose.yml`: Runs Cloudflare Tunnel
 - `infra/observability/`: Lean Prometheus + Grafana stack (350MB limit)
 - `scripts/`: Cloudflare Tunnel automation scripts
+
+## Features
+
+### 🔧 Core Deployment Features
+
+- **Resource Packages**: Small (0.5 CPU / 512MB), Medium (1 CPU / 1GB), Large (2 CPU / 2GB)
+- **Auto-Subdomain Generation**: Extracts from GitHub repo names with conflict resolution
+- **Kubernetes Orchestration**: Full K8s deployment with services and ingress
+- **Container Registry**: Automatic push to GHCR (GitHub Container Registry)
+- **Real-time Logs**: Stream build logs and application logs via REST API
+- **Autoscaling**: Horizontal Pod Autoscaler (HPA) for subscribers
+
+### 🌐 Multi-Worker Distributed System
+
+**NEW:** Deploy across multiple machines using Tailscale mesh network!
+
+- **Control-Plane as Worker**: Hybrid mode - coordinator can also run deployments locally
+- **Remote Workers**: Add worker agents on laptops, servers, or cloud VMs
+- **Smart Job Placement**:
+  - Small packages → Control-plane (fast, local)
+  - Medium/Large → Remote workers (offload heavy work)
+  - Automatic fallback if workers busy
+- **Worker Health Monitoring**: Heartbeat tracking, auto-mark offline workers
+- **Load Distribution**: Balance workload across multiple workers
+- **Tailscale Integration**: Secure mesh network for worker connectivity
+
+👉 **[Worker Registration Guide](WORKER-REGISTRATION-GUIDE.md)** - Complete step-by-step worker setup ⭐ **START HERE**
+👉 **[Quick Multi-Worker Start](QUICK-MULTI-WORKER.md)** - Fast setup with your actual IPs
+👉 **[Multi-Worker Setup Guide](docs/MULTI-WORKER-SETUP.md)** - Complete distributed deployment setup
+
+### 📊 Analytics & Monitoring
+
+- **Real-time Metrics**: Request counts, latency percentiles (p50/p90/p99), bandwidth
+- **Server-Sent Events (SSE)**: Live analytics streaming to frontend
+- **Prometheus Integration**: Platform-wide metrics collection
+- **Grafana Dashboards**: Platform overview and per-deployment analytics
+- **Pod Tracking**: Monitor which worker/cluster runs each deployment
+
+👉 **[Analytics Quick Start](ANALYTICS-QUICK-START.md)** - View metrics in 3 ways (REST API, SSE, Grafana)
+👉 **[Complete Analytics Guide](ANALYTICS-COMPLETE-GUIDE.md)** - Full setup with frontend integration
 
 ## System Requirements
 

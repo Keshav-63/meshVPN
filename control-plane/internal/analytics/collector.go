@@ -10,6 +10,7 @@ import (
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
+	"MeshVPN-slef-hosting/control-plane/internal/store"
 	"MeshVPN-slef-hosting/control-plane/internal/telemetry"
 )
 
@@ -23,12 +24,14 @@ type AnalyticsRepository interface {
 }
 
 type MetricsCollector struct {
-	analyticsRepo AnalyticsRepository
-	namespace     string
-	kubectl       string
+	analyticsRepo  AnalyticsRepository
+	workerRepo     store.WorkerRepository
+	deploymentRepo store.DeploymentRepository
+	namespace      string
+	kubectl        string
 }
 
-func NewMetricsCollector(analyticsRepo AnalyticsRepository, namespace, kubectl string) *MetricsCollector {
+func NewMetricsCollector(analyticsRepo AnalyticsRepository, workerRepo store.WorkerRepository, deploymentRepo store.DeploymentRepository, namespace, kubectl string) *MetricsCollector {
 	if namespace == "" {
 		namespace = "meshvpn-apps"
 	}
@@ -37,9 +40,11 @@ func NewMetricsCollector(analyticsRepo AnalyticsRepository, namespace, kubectl s
 	}
 
 	return &MetricsCollector{
-		analyticsRepo: analyticsRepo,
-		namespace:     namespace,
-		kubectl:       kubectl,
+		analyticsRepo:  analyticsRepo,
+		workerRepo:     workerRepo,
+		deploymentRepo: deploymentRepo,
+		namespace:      namespace,
+		kubectl:        kubectl,
 	}
 }
 
@@ -67,6 +72,9 @@ func (c *MetricsCollector) Start(ctx context.Context, interval time.Duration) {
 // Aggregate collects and updates metrics for all active deployments
 func (c *MetricsCollector) Aggregate(ctx context.Context) {
 	logs.Debugf("analytics-collector", "aggregating metrics")
+
+	// Collect platform-level metrics first
+	c.aggregatePlatformMetrics(ctx)
 
 	// Get all active deployments
 	deploymentIDs, err := c.analyticsRepo.GetAllActiveDeploymentIDs()
@@ -158,6 +166,86 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 		deploymentID, current, desired, last1h)
 
 	return nil
+}
+
+// aggregatePlatformMetrics collects and updates platform-level metrics
+func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) {
+	// Get all workers
+	workers, err := c.workerRepo.List(ctx)
+	if err != nil {
+		logs.Errorf("analytics-collector", "failed to get workers: %v", err)
+		workers = []domain.Worker{}
+	}
+
+	// Get all deployments
+	deployments := c.deploymentRepo.List()
+
+	// Count workers by status
+	idleWorkers := 0
+	busyWorkers := 0
+	offlineWorkers := 0
+	totalCapacity := 0
+	usedCapacity := 0
+
+	for _, w := range workers {
+		totalCapacity += w.MaxConcurrentJobs
+		usedCapacity += w.CurrentJobs
+
+		switch w.Status {
+		case "idle":
+			idleWorkers++
+		case "busy":
+			busyWorkers++
+		case "offline":
+			offlineWorkers++
+		}
+
+		// Update per-worker metrics
+		telemetry.UpdateWorkerMetrics(
+			w.WorkerID,
+			w.Name,
+			0, // pods - will be calculated from deployments
+			w.CurrentJobs,
+			w.Capabilities.CPUCores,
+			w.Capabilities.MemoryGB,
+		)
+	}
+
+	// Update platform worker metrics
+	telemetry.UpdatePlatformWorkers(idleWorkers, busyWorkers, offlineWorkers)
+	telemetry.UpdatePlatformWorkerCapacity(totalCapacity, usedCapacity, totalCapacity-usedCapacity)
+
+	// Count deployments by status
+	runningCount := 0
+	failedCount := 0
+	queuedCount := 0
+	totalPods := 0
+
+	for _, d := range deployments {
+		switch d.Status {
+		case "running":
+			runningCount++
+		case "failed":
+			failedCount++
+		case "queued":
+			queuedCount++
+		}
+
+		// Count pods for running deployments
+		if d.Status == "running" {
+			current, _, err := c.getPodCounts(d.DeploymentID)
+			if err == nil {
+				totalPods += current
+			}
+		}
+	}
+
+	// Update platform deployment metrics
+	telemetry.UpdatePlatformDeployments(runningCount, failedCount, queuedCount)
+	telemetry.UpdatePlatformPodsTotal(totalPods)
+
+	logs.Debugf("analytics-collector", "platform metrics: workers=%d (idle=%d busy=%d offline=%d) deployments=%d (running=%d) pods=%d",
+		len(workers), idleWorkers, busyWorkers, offlineWorkers, len(deployments), runningCount, totalPods)
 }
 
 // getPodCounts queries Kubernetes for current and desired pod counts

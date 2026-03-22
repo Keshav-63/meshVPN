@@ -36,15 +36,27 @@ func main() {
 	driver := runtime.NewDriverFromBackend(cfg.RuntimeBackend, cfg.K8sNamespace)
 	runner := runtime.NewRunnerWithDriver(driver)
 	deploymentService := service.NewDeploymentService(deps.DeploymentRepo, deps.JobRepo, runner)
-	worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)
 
 	workerCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go worker.Start(workerCtx)
+
+	// Start either multi-worker distributor or single embedded worker
+	if cfg.EnableMultiWorker && deps.WorkerRepo != nil {
+		// Multi-worker mode: start job distributor
+		distributor := service.NewJobDistributor(deps.JobRepo, deps.WorkerRepo, cfg)
+		go distributor.Start(workerCtx)
+		logs.Infof("main", "multi-worker mode enabled strategy=%s control_plane_as_worker=%t",
+			cfg.JobPlacementStrategy, cfg.ControlPlaneAsWorker)
+	} else {
+		// Single-worker mode: start embedded worker
+		worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)
+		go worker.Start(workerCtx)
+		logs.Infof("main", "single-worker mode: embedded worker started")
+	}
 
 	// Start analytics collector if database is available
 	if deps.HasDatabase && deps.AnalyticsRepo != nil {
-		collector := analytics.NewMetricsCollector(deps.AnalyticsRepo, cfg.K8sNamespace, "kubectl")
+		collector := analytics.NewMetricsCollector(deps.AnalyticsRepo, deps.WorkerRepo, deps.DeploymentRepo, cfg.K8sNamespace, "kubectl")
 		go collector.Start(workerCtx, 1*time.Minute)
 		logs.Infof("main", "analytics collector started interval=1m")
 	}
@@ -62,7 +74,7 @@ func main() {
 	}
 
 	logs.Infof("main", "starting router require_auth=%t has_database=%t analytics=%t", cfg.RequireAuth, deps.HasDatabase, analyticsRepo != nil)
-	router := httpapi.NewRouter(cfg, deploymentService, userRepo, analyticsRepo)
+	router := httpapi.NewRouter(cfg, deploymentService, userRepo, analyticsRepo, deps.WorkerRepo, deps.JobRepo, deps.DeploymentRepo)
 
 	if err := router.Run("0.0.0.0:8080"); err != nil {
 		log.Fatalf("server exited: %v", err)

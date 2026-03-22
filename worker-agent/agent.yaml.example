@@ -1,0 +1,23 @@
+worker:
+  id: worker-laptop-1
+  name: "Keshav's Laptop Worker"
+  tailscale_ip: ""  # Auto-detected if empty
+  max_concurrent_jobs: 2
+
+control_plane:
+  url: http://control-plane.tail-scale-domain.ts.net:8080  # Or use Tailscale IP
+  shared_secret: "change-this-secret-in-production"
+
+runtime:
+  type: kubernetes
+  kubeconfig: /home/user/.kube/config
+  namespace: worker-apps
+  kubectl_bin: kubectl
+
+capabilities:
+  memory_gb: 16
+  cpu_cores: 8
+  supported_packages:
+    - small
+    - medium
+    - large

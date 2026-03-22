@@ -1,0 +1,53 @@
+# Worker Agent Configuration
+# This file configures a remote worker that connects to the control-plane
+
+worker:
+  # Unique identifier for this worker (must be unique across all workers)
+  id: worker-laptop-1
+
+  # Human-readable name for this worker
+  name: "Keshav's Laptop Worker"
+
+  # Tailscale IP address (leave empty for auto-detection)
+  # Auto-detection runs: tailscale ip -4
+  # Or manually set your Tailscale IP: 100.64.1.2
+  tailscale_ip: ""
+
+  # Maximum concurrent jobs this worker can handle
+  max_concurrent_jobs: 2
+
+control_plane:
+  # Control-plane URL (use Tailscale IP or domain)
+  # Control-plane Tailscale IP: 100.107.233.70
+  url: http://100.107.233.70:8080
+
+  # Shared secret for authentication (must match WORKER_SHARED_SECRET in control-plane .env)
+  shared_secret: "meshvpn-worker-secret-change-in-production"
+
+runtime:
+  # Runtime type: kubernetes or docker
+  type: kubernetes
+
+  # Path to kubeconfig file
+  # For WSL: /home/<username>/.kube/config
+  # For Linux: ~/.kube/config
+  kubeconfig: /home/Keshav/.kube/config
+
+  # Kubernetes namespace where deployments will be created
+  namespace: worker-apps
+
+  # Path to kubectl binary (usually just "kubectl" if in PATH)
+  kubectl_bin: kubectl
+
+capabilities:
+  # Total memory available on this worker (GB)
+  memory_gb: 16
+
+  # Total CPU cores available on this worker
+  cpu_cores: 8
+
+  # Package sizes this worker can handle
+  supported_packages:
+    - small
+    - medium
+    - large

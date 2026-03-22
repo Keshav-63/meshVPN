@@ -11,6 +11,7 @@ import (
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
 	"MeshVPN-slef-hosting/control-plane/internal/service"
+	"MeshVPN-slef-hosting/control-plane/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -36,7 +37,7 @@ type DeployRequestPayload struct {
 	MemoryMB             int               `json:"memory_mb"`
 }
 
-func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService, userRepo auth.UserRepository, analyticsRepo AnalyticsRepository) *gin.Engine {
+func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService, userRepo auth.UserRepository, analyticsRepo AnalyticsRepository, workerRepo store.WorkerRepository, jobRepo store.JobRepository, deploymentRepo store.DeploymentRepository) *gin.Engine {
 	router := gin.Default()
 
 	router.GET("/health", func(c *gin.Context) {
@@ -258,6 +259,38 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 		protected.GET("/deployments/:id/analytics", analyticsHandler.GetAnalytics)
 		protected.GET("/deployments/:id/analytics/stream", analyticsHandler.StreamAnalytics)
 		logs.Infof("http", "analytics endpoints registered")
+	}
+
+	// Platform-level analytics endpoints
+	if workerRepo != nil && deploymentRepo != nil && analyticsRepo != nil {
+		platformAnalyticsHandler := NewPlatformAnalyticsHandler(
+			deploymentRepo,
+			workerRepo,
+			jobRepo,
+			analyticsRepo,
+		)
+
+		protected.GET("/platform/analytics", platformAnalyticsHandler.GetPlatformAnalytics)
+		protected.GET("/platform/workers/:id/analytics", platformAnalyticsHandler.GetWorkerAnalytics)
+		logs.Infof("http", "platform analytics endpoints registered")
+	}
+
+	// Worker API endpoints (no user auth - workers use internal routes)
+	if workerRepo != nil && jobRepo != nil {
+		workerHandler := NewWorkerHandler(workerRepo, jobRepo)
+
+		workerAPI := router.Group("/api/workers")
+		// TODO: Add worker authentication middleware (shared secret or mTLS)
+		workerAPI.POST("/register", workerHandler.Register)
+		workerAPI.POST("/:id/heartbeat", workerHandler.Heartbeat)
+		workerAPI.GET("/:id/claim-job", workerHandler.ClaimJob)
+		workerAPI.POST("/:id/job-complete", workerHandler.JobComplete)
+		workerAPI.POST("/:id/job-failed", workerHandler.JobFailed)
+
+		// Admin endpoints (require user auth)
+		protected.GET("/workers", workerHandler.List)
+
+		logs.Infof("http", "worker API endpoints registered")
 	}
 
 	return router
