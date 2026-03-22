@@ -130,6 +130,10 @@ func (e *JobExecutor) createDeployment(deploymentID, imageName, subdomain string
 }
 
 func (e *JobExecutor) generateManifest(deploymentID, imageName, subdomain string, port int, cpuCores float64, memoryMB int) string {
+	// Prefix deployment ID with "app-" to ensure K8s naming compliance
+	// K8s resource names must start with a letter
+	resourceName := fmt.Sprintf("app-%s", deploymentID)
+
 	return fmt.Sprintf(`
 apiVersion: apps/v1
 kind: Deployment
@@ -187,9 +191,9 @@ spec:
             name: %s
             port:
               number: 80
-`, deploymentID, deploymentID, deploymentID, imageName, port,
+`, resourceName, resourceName, resourceName, imageName, port,
 		int(cpuCores*1000), memoryMB,
 		int(cpuCores*1000*2), memoryMB*2,
-		deploymentID, deploymentID, port,
-		deploymentID, subdomain, deploymentID)
+		resourceName, resourceName, port,
+		resourceName, subdomain, resourceName)
 }

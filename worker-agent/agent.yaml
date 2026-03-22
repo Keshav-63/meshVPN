@@ -3,15 +3,15 @@
 
 worker:
   # Unique identifier for this worker (must be unique across all workers)
-  id: worker-laptop-1
+  id: chaitanya-worker-1
 
   # Human-readable name for this worker
-  name: "Keshav's Laptop Worker"
+  name: "chaitanya's laptop"
 
   # Tailscale IP address (leave empty for auto-detection)
   # Auto-detection runs: tailscale ip -4
   # Or manually set your Tailscale IP: 100.64.1.2
-  tailscale_ip: ""
+  tailscale_ip: "100.109.33.25"
 
   # Maximum concurrent jobs this worker can handle
   max_concurrent_jobs: 2
@@ -31,7 +31,7 @@ runtime:
   # Path to kubeconfig file
   # For WSL: /home/<username>/.kube/config
   # For Linux: ~/.kube/config
-  kubeconfig: /home/Keshav/.kube/config
+  kubeconfig: /home/chaitanya/.kube/config
 
   # Kubernetes namespace where deployments will be created
   namespace: worker-apps

@@ -33,3 +33,5 @@ control-plane/control-plane.exe
 .idea/
 .DS_Store
 Thumbs.db
+
+**/cache/
