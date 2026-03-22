@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
+	"MeshVPN-slef-hosting/control-plane/internal/analytics"
+	"MeshVPN-slef-hosting/control-plane/internal/auth"
 	"MeshVPN-slef-hosting/control-plane/internal/config"
 	"MeshVPN-slef-hosting/control-plane/internal/httpapi"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
@@ -39,10 +42,29 @@ func main() {
 	defer cancel()
 	go worker.Start(workerCtx)
 
-	logs.Infof("main", "starting router require_auth=%t has_database=%t", cfg.RequireAuth, deps.HasDatabase)
-	router := httpapi.NewRouter(cfg, deploymentService)
+	// Start analytics collector if database is available
+	if deps.HasDatabase && deps.AnalyticsRepo != nil {
+		collector := analytics.NewMetricsCollector(deps.AnalyticsRepo, cfg.K8sNamespace, "kubectl")
+		go collector.Start(workerCtx, 1*time.Minute)
+		logs.Infof("main", "analytics collector started interval=1m")
+	}
 
-	if err := router.Run(":8080"); err != nil {
+	// Prepare user repository for auth middleware
+	var userRepo auth.UserRepository
+	if deps.UserRepo != nil {
+		userRepo = deps.UserRepo
+	}
+
+	// Prepare analytics repository for analytics endpoints
+	var analyticsRepo httpapi.AnalyticsRepository
+	if deps.AnalyticsRepo != nil {
+		analyticsRepo = deps.AnalyticsRepo
+	}
+
+	logs.Infof("main", "starting router require_auth=%t has_database=%t analytics=%t", cfg.RequireAuth, deps.HasDatabase, analyticsRepo != nil)
+	router := httpapi.NewRouter(cfg, deploymentService, userRepo, analyticsRepo)
+
+	if err := router.Run("0.0.0.0:8080"); err != nil {
 		log.Fatalf("server exited: %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"MeshVPN-slef-hosting/control-plane/internal/auth"
 	"MeshVPN-slef-hosting/control-plane/internal/config"
+	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
 	"MeshVPN-slef-hosting/control-plane/internal/service"
 
@@ -16,9 +17,14 @@ import (
 )
 
 type DeployRequestPayload struct {
-	Repo                 string            `json:"repo" binding:"required"`
-	Port                 int               `json:"port"`
-	Subdomain            string            `json:"subdomain"`
+	Repo      string            `json:"repo" binding:"required"`
+	Port      int               `json:"port"`
+	Subdomain string            `json:"subdomain"` // Optional - auto-generated if empty
+	Package   string            `json:"package"`   // small, medium, large
+	Env       map[string]string `json:"env"`
+	BuildArgs map[string]string `json:"build_args"`
+
+	// Advanced options (optional - overridden by package if subscriber)
 	ScalingMode          string            `json:"scaling_mode"`
 	MinReplicas          int               `json:"min_replicas"`
 	MaxReplicas          int               `json:"max_replicas"`
@@ -26,13 +32,11 @@ type DeployRequestPayload struct {
 	CPURequestMilli      int               `json:"cpu_request_milli"`
 	CPULimitMilli        int               `json:"cpu_limit_milli"`
 	NodeSelector         map[string]string `json:"node_selector"`
-	Env                  map[string]string `json:"env"`
-	BuildArgs            map[string]string `json:"build_args"`
 	CPUCores             float64           `json:"cpu_cores"`
 	MemoryMB             int               `json:"memory_mb"`
 }
 
-func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService) *gin.Engine {
+func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService, userRepo auth.UserRepository, analyticsRepo AnalyticsRepository) *gin.Engine {
 	router := gin.Default()
 
 	router.GET("/health", func(c *gin.Context) {
@@ -43,10 +47,17 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 	})
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
+	// Create analytics handler
+	var analyticsHandler *AnalyticsHandler
+	if analyticsRepo != nil {
+		analyticsHandler = NewAnalyticsHandler(deploymentService, analyticsRepo)
+	}
+
 	protected := router.Group("/")
 	protected.Use(auth.RequireSupabaseGitHub(auth.MiddlewareConfig{
 		JWTSecret:   cfg.SupabaseJWTSecret,
 		RequireAuth: cfg.RequireAuth,
+		UserRepo:    userRepo,
 	}))
 
 	protected.GET("/auth/whoami", func(c *gin.Context) {
@@ -69,26 +80,85 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 			return
 		}
 
+		// Get user from context (set by auth middleware)
+		user, userExists := c.Get("auth.user")
+		var actualUser domain.User
+		var isSubscriber bool
+
+		if userExists {
+			actualUser = user.(domain.User)
+			isSubscriber = actualUser.IsSubscriber
+		} else {
+			// Fallback for when auth is disabled
+			isSubscriber = false
+		}
+
+		// Validate and get package specification
+		packageName := strings.ToLower(strings.TrimSpace(payload.Package))
+		if packageName == "" {
+			packageName = "small" // Default package
+		}
+
+		if !domain.IsValidPackage(packageName) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("invalid package '%s'. must be: small, medium, large", packageName),
+			})
+			return
+		}
+
+		packageSpec, _ := domain.GetPackageSpec(domain.ResourcePackage(packageName))
+
+		// Determine scaling behavior based on subscription status
+		scalingMode := "none"
+		minReplicas := 1
+		maxReplicas := 1
+		cpuTarget := 70 // Default CPU target percentage
+
+		if isSubscriber {
+			// Subscribers get autoscaling enabled
+			scalingMode = "horizontal"
+			minReplicas = 1
+			maxReplicas = packageSpec.MaxReplicas
+
+			// Allow subscribers to customize scaling parameters
+			if payload.CPUTargetUtilization > 0 && payload.CPUTargetUtilization <= 100 {
+				cpuTarget = payload.CPUTargetUtilization
+			}
+			if payload.MinReplicas > 0 {
+				minReplicas = payload.MinReplicas
+			}
+			if payload.MaxReplicas > 0 && payload.MaxReplicas <= packageSpec.MaxReplicas {
+				maxReplicas = payload.MaxReplicas
+			}
+		}
+
+		logs.Infof("http", "deploy package=%s subscriber=%t scaling=%s user_id=%s", packageName, isSubscriber, scalingMode, actualUser.UserID)
+
 		rec, err := deploymentService.EnqueueDeploy(c.Request.Context(), service.DeployRequest{
 			Repo:         payload.Repo,
 			Port:         payload.Port,
 			Subdomain:    payload.Subdomain,
-			ScalingMode:  payload.ScalingMode,
-			MinReplicas:  payload.MinReplicas,
-			MaxReplicas:  payload.MaxReplicas,
-			CPUTarget:    payload.CPUTargetUtilization,
-			CPURequest:   payload.CPURequestMilli,
-			CPULimit:     payload.CPULimitMilli,
+			Package:      packageName,
+			CPUCores:     packageSpec.CPUCores,
+			MemoryMB:     packageSpec.MemoryMB,
+			ScalingMode:  scalingMode,
+			MinReplicas:  minReplicas,
+			MaxReplicas:  maxReplicas,
+			CPUTarget:    cpuTarget,
+			CPURequest:   int(packageSpec.CPUCores * 1000), // Convert to millicores
+			CPULimit:     500,                              // Safety limit
 			NodeSelector: payload.NodeSelector,
 			Env:          payload.Env,
 			BuildArgs:    payload.BuildArgs,
-			CPUCores:     payload.CPUCores,
-			MemoryMB:     payload.MemoryMB,
 			RequestedBy:  c.GetString("auth.sub"),
+			UserID:       actualUser.UserID,
 		})
 		if err != nil {
 			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "repo is required") || strings.Contains(err.Error(), "invalid build_args") || strings.Contains(err.Error(), "invalid env var name") || strings.Contains(err.Error(), "invalid scaling_mode") || strings.Contains(err.Error(), "replicas") || strings.Contains(err.Error(), "cpu_") {
+			if strings.Contains(err.Error(), "repo is required") ||
+				strings.Contains(err.Error(), "invalid") ||
+				strings.Contains(err.Error(), "subdomain") ||
+				strings.Contains(err.Error(), "already in use") {
 				status = http.StatusBadRequest
 			}
 			logs.Errorf("http", "enqueue failed err=%v", err)
@@ -98,23 +168,25 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 			return
 		}
 
-		c.JSON(http.StatusAccepted, gin.H{
+		response := gin.H{
 			"message":                "deployment queued",
 			"deployment_id":          rec.DeploymentID,
 			"status":                 rec.Status,
 			"repo":                   rec.Repo,
 			"subdomain":              rec.Subdomain,
+			"url":                    fmt.Sprintf("https://%s.%s", rec.Subdomain, "keshavstack.tech"),
 			"port":                   rec.Port,
+			"package":                packageName,
+			"cpu_cores":              packageSpec.CPUCores,
+			"memory_mb":              packageSpec.MemoryMB,
 			"scaling_mode":           rec.ScalingMode,
 			"min_replicas":           rec.MinReplicas,
 			"max_replicas":           rec.MaxReplicas,
 			"cpu_target_utilization": rec.CPUTarget,
-			"cpu_request_milli":      rec.CPURequest,
-			"cpu_limit_milli":        rec.CPULimit,
-			"node_selector":          rec.NodeSelector,
-			"cpu_cores":              rec.CPUCores,
-			"memory_mb":              rec.MemoryMB,
-		})
+			"autoscaling_enabled":    isSubscriber,
+		}
+
+		c.JSON(http.StatusAccepted, response)
 	})
 
 	protected.GET("/deployments", func(c *gin.Context) {
@@ -180,6 +252,13 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 			"application_logs": appLogs,
 		})
 	})
+
+	// Analytics endpoints (if analytics repository is available)
+	if analyticsHandler != nil {
+		protected.GET("/deployments/:id/analytics", analyticsHandler.GetAnalytics)
+		protected.GET("/deployments/:id/analytics/stream", analyticsHandler.StreamAnalytics)
+		logs.Infof("http", "analytics endpoints registered")
+	}
 
 	return router
 }

@@ -57,7 +57,7 @@ func (r *PostgresDeploymentRepository) Update(rec domain.DeploymentRecord) {
 
 func (r *PostgresDeploymentRepository) Get(id string) (domain.DeploymentRecord, error) {
 	const query = `
-SELECT deployment_id, requested_by, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 WHERE deployment_id = $1
 `
@@ -72,10 +72,14 @@ WHERE deployment_id = $1
 	var errText sql.NullString
 	var buildLogs sql.NullString
 	var finishedAt sql.NullTime
+	var userID sql.NullString
+	var pkg sql.NullString
 
 	err := r.db.QueryRow(query, id).Scan(
 		&rec.DeploymentID,
 		&rec.RequestedBy,
+		&userID,
+		&pkg,
 		&rec.Repo,
 		&rec.Subdomain,
 		&rec.Port,
@@ -106,6 +110,12 @@ WHERE deployment_id = $1
 		return domain.DeploymentRecord{}, fmt.Errorf("query deployment: %w", err)
 	}
 
+	if userID.Valid {
+		rec.UserID = userID.String
+	}
+	if pkg.Valid {
+		rec.Package = pkg.String
+	}
 	if container.Valid {
 		rec.Container = container.String
 	}
@@ -135,7 +145,7 @@ WHERE deployment_id = $1
 
 func (r *PostgresDeploymentRepository) List() []domain.DeploymentRecord {
 	const query = `
-SELECT deployment_id, requested_by, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 ORDER BY started_at DESC
 `
@@ -158,10 +168,14 @@ ORDER BY started_at DESC
 		var errText sql.NullString
 		var buildLogs sql.NullString
 		var finishedAt sql.NullTime
+		var userID sql.NullString
+		var pkg sql.NullString
 
 		err := rows.Scan(
 			&rec.DeploymentID,
 			&rec.RequestedBy,
+			&userID,
+			&pkg,
 			&rec.Repo,
 			&rec.Subdomain,
 			&rec.Port,
@@ -189,6 +203,12 @@ ORDER BY started_at DESC
 			continue
 		}
 
+		if userID.Valid {
+			rec.UserID = userID.String
+		}
+		if pkg.Valid {
+			rec.Package = pkg.String
+		}
 		if container.Valid {
 			rec.Container = container.String
 		}
@@ -222,14 +242,16 @@ ORDER BY started_at DESC
 func (r *PostgresDeploymentRepository) upsert(rec domain.DeploymentRecord) error {
 	const stmt = `
 INSERT INTO deployments (
-	deployment_id, requested_by, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+	deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 )
 VALUES (
-	$1, NULLIF($2, ''), $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12::jsonb, $13, $14, NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), $18, NULLIF($19, ''), NULLIF($20, ''), $21::jsonb, $22::jsonb, $23, $24
+	$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NULLIF($8, ''), $9, $10, $11, $12, $13, $14::jsonb, $15, $16, NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, NULLIF($21, ''), NULLIF($22, ''), $23::jsonb, $24::jsonb, $25, $26
 )
 ON CONFLICT (deployment_id)
 DO UPDATE SET
 	requested_by = EXCLUDED.requested_by,
+	user_id = EXCLUDED.user_id,
+	package = EXCLUDED.package,
     repo = EXCLUDED.repo,
     subdomain = EXCLUDED.subdomain,
     port = EXCLUDED.port,
@@ -262,6 +284,8 @@ DO UPDATE SET
 		stmt,
 		rec.DeploymentID,
 		rec.RequestedBy,
+		rec.UserID,
+		rec.Package,
 		rec.Repo,
 		rec.Subdomain,
 		rec.Port,

@@ -67,7 +67,7 @@ func (d *KubernetesDriver) DeployRepo(repo string, id string, subdomain string, 
 		return DeploymentResult{}, logs.String(), fmt.Errorf("apply k8s manifests: %w", err)
 	}
 
-	rolloutOutput, err := runCommand("", d.kubectl, "-n", d.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=180s")
+	rolloutOutput, err := runCommand("", d.kubectl, "-n", d.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=600s")
 	buildlogs.AppendSection(&logs, "rollout", rolloutOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), fmt.Errorf("wait deployment rollout: %w", err)
@@ -213,24 +213,39 @@ func (d *KubernetesDriver) renderWorkloadManifest(deployment string, service str
 		}
 	}
 
-	cpuMilli := int(cpuCores * 1000)
-	if cpuMilli > 0 || memoryMB > 0 {
-		sb.WriteString("        resources:\n")
-		sb.WriteString("          requests:\n")
-		if cpuMilli > 0 {
-			sb.WriteString(fmt.Sprintf("            cpu: %dm\n", cpuMilli))
-		}
-		if memoryMB > 0 {
-			sb.WriteString(fmt.Sprintf("            memory: %dMi\n", memoryMB))
-		}
-		sb.WriteString("          limits:\n")
-		if cpuMilli > 0 {
-			sb.WriteString(fmt.Sprintf("            cpu: %dm\n", cpuMilli))
-		}
-		if memoryMB > 0 {
-			sb.WriteString(fmt.Sprintf("            memory: %dMi\n", memoryMB))
-		}
+	// ENFORCE STRICT LAPTOP SAFE LIMITS HERE
+	// If the user requests 0 CPU, give them bare minimum base instead of unlimited.
+	if cpuCores <= 0 {
+		cpuCores = 0.05 // 50 millicores baseline for idle pods
 	}
+	if memoryMB <= 0 {
+		memoryMB = 64 // 64MB baseline
+	}
+
+	// Cap absolute maximum limits to prevent laptop freezing
+	maxCpuLimitMilli := 500 // Never allow more than half a core per pod
+	maxMemLimitMB := 512    // Never allow more than 512MB per pod
+
+	cpuMilli := int(cpuCores * 1000)
+
+	sb.WriteString("        resources:\n")
+	sb.WriteString("          requests:\n")
+	sb.WriteString(fmt.Sprintf("            cpu: %dm\n", cpuMilli))
+	sb.WriteString(fmt.Sprintf("            memory: %dMi\n", memoryMB))
+
+	// Create safe limits
+	limitCpu := cpuMilli * 2 // Limit is double the request
+	if limitCpu > maxCpuLimitMilli {
+		limitCpu = maxCpuLimitMilli
+	}
+	limitMem := memoryMB * 2 // Limit is double the request
+	if limitMem > maxMemLimitMB {
+		limitMem = maxMemLimitMB
+	}
+
+	sb.WriteString("          limits:\n")
+	sb.WriteString(fmt.Sprintf("            cpu: %dm\n", limitCpu))
+	sb.WriteString(fmt.Sprintf("            memory: %dMi\n", limitMem))
 
 	sb.WriteString("---\n")
 	sb.WriteString("apiVersion: v1\n")

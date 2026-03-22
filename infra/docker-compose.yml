@@ -1,61 +1,9 @@
 services:
-  traefik:
-    image: traefik:v2.11
-    command:
-      - --api.dashboard=true
-      - --api.insecure=true
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=laptopcloud-proxy
-      - --entrypoints.web.address=:80
-    ports:
-      - "80:80"
-      - "8081:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - proxy
-
-  control-plane:
-    build:
-      context: ../control-plane
-      dockerfile: Dockerfile
-    image: meshvpn-control-plane:local
-    environment:
-      - APP_BASE_DOMAIN=${APP_BASE_DOMAIN:-localhost}
-      - DATABASE_URL=${DATABASE_URL:-}
-      - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
-      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-}
-      - REQUIRE_AUTH=${REQUIRE_AUTH:-true}
-      - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-2s}
-      - WORKER_BATCH_SIZE=${WORKER_BATCH_SIZE:-3}
-      - RUNTIME_BACKEND=${RUNTIME_BACKEND:-docker}
-      - ENABLE_CPU_HPA=${ENABLE_CPU_HPA:-false}
-      - K8S_NAMESPACE=${K8S_NAMESPACE:-meshvpn-apps}
-      - K8S_CONFIG_PATH=${K8S_CONFIG_PATH:-/root/.kube/config}
-      - K8S_IMAGE_PREFIX=${K8S_IMAGE_PREFIX:-}
-      - KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ../apps:/apps
-      - ${K8S_HOST_KUBE_DIR:-/home/keshav/.kube}:/root/.kube:ro
-      - ${K8S_HOST_DOCKER_CONFIG_DIR:-/home/keshav/.docker}:/root/.docker
-    depends_on:
-      - traefik
-    networks:
-      - proxy
-
   cloudflared:
-    image: cloudflare/cloudflared:2026.3.0
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN"
     environment:
-      - TUNNEL_METRICS=0.0.0.0:20242
-    depends_on:
-      - control-plane
-      - traefik
-    networks:
-      - proxy
+      - CLOUDFLARE_TUNNEL_TOKEN=$CLOUDFLARE_TUNNEL_TOKEN
+    network_mode: "host"
+    restart: unless-stopped
 
-networks:
-  proxy:
-    name: laptopcloud-proxy

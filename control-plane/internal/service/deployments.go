@@ -22,6 +22,7 @@ type DeployRequest struct {
 	Repo         string
 	Port         int
 	Subdomain    string
+	Package      string
 	ScalingMode  string
 	MinReplicas  int
 	MaxReplicas  int
@@ -34,6 +35,7 @@ type DeployRequest struct {
 	CPUCores     float64
 	MemoryMB     int
 	RequestedBy  string
+	UserID       string
 }
 
 type DeploymentService struct {
@@ -70,9 +72,11 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 	}
 
 	deploymentID := strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
-	subdomain := strings.TrimSpace(req.Subdomain)
-	if subdomain == "" {
-		subdomain = "app-" + deploymentID
+
+	// Generate subdomain (auto-extract from repo or use user-provided)
+	subdomain, subErr := s.GenerateSubdomain(repoURL, req.Subdomain)
+	if subErr != nil {
+		return domain.DeploymentRecord{}, subErr
 	}
 
 	runtimeEnv, err := sanitizeEnvMap(req.Env)
@@ -98,6 +102,8 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 	record := domain.DeploymentRecord{
 		DeploymentID: deploymentID,
 		RequestedBy:  strings.TrimSpace(req.RequestedBy),
+		UserID:       strings.TrimSpace(req.UserID),
+		Package:      strings.TrimSpace(req.Package),
 		Repo:         repoURL,
 		Subdomain:    subdomain,
 		Port:         port,
@@ -192,4 +198,122 @@ func sanitizeEnvMap(values map[string]string) (map[string]string, error) {
 	}
 
 	return sanitized, nil
+}
+
+// extractRepoName extracts the repository name from a GitHub URL
+// Examples:
+//   - https://github.com/user/my-app.git -> my-app
+//   - git@github.com:user/my-app.git -> my-app
+//   - https://github.com/user/my-app -> my-app
+func extractRepoName(repoURL string) string {
+	repoURL = strings.TrimSpace(repoURL)
+
+	// Remove .git suffix
+	repoURL = strings.TrimSuffix(repoURL, ".git")
+
+	// Extract last part of path
+	parts := strings.Split(repoURL, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+
+	repoName := parts[len(parts)-1]
+
+	// For SSH URLs like git@github.com:user/repo
+	if strings.Contains(repoName, ":") {
+		colonParts := strings.Split(repoName, ":")
+		if len(colonParts) > 1 {
+			repoName = colonParts[len(colonParts)-1]
+		}
+	}
+
+	return sanitizeSubdomain(repoName)
+}
+
+// sanitizeSubdomain converts a string to valid subdomain format
+// - Lowercase
+// - Replace underscores and spaces with hyphens
+// - Remove invalid characters
+// - Ensure starts with alphanumeric
+func sanitizeSubdomain(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	// Replace underscores and spaces with hyphens
+	name = strings.ReplaceAll(name, "_", "-")
+	name = strings.ReplaceAll(name, " ", "-")
+
+	// Remove non-alphanumeric characters except hyphens
+	var result strings.Builder
+	for _, char := range name {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
+			result.WriteRune(char)
+		}
+	}
+
+	subdomain := result.String()
+
+	// Remove leading/trailing hyphens
+	subdomain = strings.Trim(subdomain, "-")
+
+	// Ensure starts with alphanumeric
+	if len(subdomain) > 0 && subdomain[0] == '-' {
+		subdomain = subdomain[1:]
+	}
+
+	// Limit length to 63 characters (DNS subdomain limit)
+	if len(subdomain) > 63 {
+		subdomain = subdomain[:63]
+	}
+
+	return subdomain
+}
+
+// generateShortID generates a short random ID for subdomain suffix
+func generateShortID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")[:6]
+}
+
+// isSubdomainUnique checks if subdomain is already in use
+func (s *DeploymentService) isSubdomainUnique(subdomain string) bool {
+	deployments := s.repo.List()
+	for _, d := range deployments {
+		if d.Subdomain == subdomain && d.Status != "failed" {
+			return false
+		}
+	}
+	return true
+}
+
+// GenerateSubdomain generates a unique subdomain from repo URL or uses user-provided
+func (s *DeploymentService) GenerateSubdomain(repoURL, userProvided string) (string, error) {
+	userProvided = strings.TrimSpace(userProvided)
+
+	// If user explicitly provided subdomain, validate and use it
+	if userProvided != "" {
+		subdomain := sanitizeSubdomain(userProvided)
+		if subdomain == "" {
+			return "", fmt.Errorf("invalid subdomain format: %s", userProvided)
+		}
+
+		if !s.isSubdomainUnique(subdomain) {
+			return "", fmt.Errorf("subdomain '%s' is already in use", subdomain)
+		}
+
+		return subdomain, nil
+	}
+
+	// Auto-generate from repo name
+	subdomain := extractRepoName(repoURL)
+	if subdomain == "" {
+		return "", fmt.Errorf("could not extract subdomain from repo URL")
+	}
+
+	// Check if unique, append random suffix if conflict
+	if !s.isSubdomainUnique(subdomain) {
+		originalSubdomain := subdomain
+		subdomain = fmt.Sprintf("%s-%s", subdomain, generateShortID())
+		logs.Infof("service", "subdomain conflict, using %s instead of %s", subdomain, originalSubdomain)
+	}
+
+	return subdomain, nil
 }

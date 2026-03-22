@@ -5,6 +5,8 @@ import "time"
 type DeploymentRecord struct {
 	DeploymentID string            `json:"deployment_id"`
 	RequestedBy  string            `json:"requested_by,omitempty"`
+	UserID       string            `json:"user_id,omitempty"`
+	Package      string            `json:"package,omitempty"`
 	Repo         string            `json:"repo"`
 	Subdomain    string            `json:"subdomain"`
 	Port         int               `json:"port"`
