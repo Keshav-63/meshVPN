@@ -260,9 +260,7 @@ kubectl get namespaces
 
 ```bash
 # Export to a file that control-plane can use
-k3d kubeconfig write meshvpn > ~/k3d-kubeconfig.yaml
-
-# Verify the file exists
+k3d kubeconfig get meshvpn > ~/k3d-kubeconfig.yaml
 ls -lh ~/k3d-kubeconfig.yaml
 
 # Check contents (should have server pointing to localhost)
