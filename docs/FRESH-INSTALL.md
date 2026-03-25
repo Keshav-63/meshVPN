@@ -204,7 +204,6 @@ k3d cluster create meshvpn \
   --port "443:443@loadbalancer" \
   --agents 0 \
   --servers 1 \
-  --k3s-arg "--disable=traefik@server:0"
 
 # Wait for cluster to be ready (may take 30-60 seconds)
 echo "Waiting for cluster to be ready..."
