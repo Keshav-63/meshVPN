@@ -1,6 +1,33 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  scrape_timeout: 4s
+
 scrape_configs:
+  # Control-plane metrics (running in WSL on localhost:8080)
   - job_name: 'control-plane'
     scrape_interval: 5s
+    metrics_path: '/metrics'
     static_configs:
-      # Scrape via socat proxy forwarding to WSL2 localhost
-      - targets: ['control-plane-proxy:8080']
+      - targets: ['localhost:8080']
+        labels:
+          service: 'control-plane'
+          environment: 'production'
+
+  # Node exporter for system metrics (optional - install if needed)
+  # Uncomment if you install node_exporter on WSL
+  # - job_name: 'node-exporter'
+  #   scrape_interval: 10s
+  #   static_configs:
+  #     - targets: ['localhost:9100']
+  #       labels:
+  #         service: 'system'
+
+  # Worker agents (if they expose metrics endpoints)
+  # Add worker endpoints here as they come online
+  # - job_name: 'worker-agents'
+  #   scrape_interval: 10s
+  #   static_configs:
+  #     - targets: ['worker1-ip:9090', 'worker2-ip:9090']
+  #       labels:
+  #         service: 'worker-agent'
