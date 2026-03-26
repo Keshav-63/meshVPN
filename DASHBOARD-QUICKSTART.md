@@ -5,26 +5,27 @@
 ### In WSL Terminal:
 ```bash
 # 1. Start Prometheus
-cd /mnt/c/Users/Keshav\ suthar/Desktop/MeshVPN-slef-hosting/infra/observability
-prometheus --config.file=prometheus.yml
+cd /mnt/c/Users/Shreeyansh/Desktop/Veltrix/meshVPN/infra/observability
+prometheus --config.file=prometheus.yml --web.listen-address=0.0.0.0:9090
 
 # Or use the automated script:
-cd /mnt/c/Users/Keshav\ suthar/Desktop/MeshVPN-slef-hosting
+cd /mnt/c/Users/Shreeyansh/Desktop/Veltrix/meshVPN
 ./scripts/start-analytics.sh
 ```
 
 ### In Another Terminal:
 ```bash
-# 2. Start Grafana
-cd /mnt/c/Users/Keshav\ suthar/Desktop/MeshVPN-slef-hosting/infra/observability
-docker-compose up -d grafana
+# 2. Start Grafana (local service in WSL)
+sudo service grafana-server start
 ```
 
 ### In Your Browser:
 ```
 # 3. Open Dashboard
-http://localhost:3001
+http://localhost:3000
 ```
+
+For full local setup instructions, see [docs/GRAFANA-LOCAL-SETUP.md](docs/GRAFANA-LOCAL-SETUP.md).
 
 ## ✨ That's It!
 
@@ -76,7 +77,7 @@ The comprehensive analytics dashboard will load automatically with:
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| **Grafana Dashboard** | http://localhost:3001 | Main analytics interface |
+| **Grafana Dashboard** | http://localhost:3000 | Main analytics interface |
 | **Prometheus UI** | http://localhost:9090 | Metrics database |
 | **Prometheus Targets** | http://localhost:9090/targets | Check scraping status |
 | **Control-Plane Metrics** | http://localhost:8080/metrics | Raw metrics endpoint |
@@ -92,7 +93,7 @@ curl http://localhost:8080/metrics
 curl http://localhost:9090/-/healthy
 
 # Check Grafana health
-curl http://localhost:3001/api/health
+curl http://localhost:3000/api/health
 ```
 
 ### Stop Services
@@ -100,15 +101,14 @@ curl http://localhost:3001/api/health
 # Stop Prometheus (in WSL)
 pkill prometheus
 
-# Stop Grafana
-cd infra/observability
-docker-compose stop grafana
+# Stop Grafana (local service)
+sudo service grafana-server stop
 ```
 
 ### Restart Services
 ```bash
 # Restart Grafana
-docker-compose restart grafana
+sudo service grafana-server restart
 
 # Restart Prometheus
 # Just kill and re-run the prometheus command above
@@ -135,6 +135,7 @@ docker-compose restart grafana
 
 ## 📖 Full Documentation
 
+- **Local Setup (Recommended)**: [docs/GRAFANA-LOCAL-SETUP.md](docs/GRAFANA-LOCAL-SETUP.md)
 - **Complete Guide**: [GRAFANA-DASHBOARD-GUIDE.md](GRAFANA-DASHBOARD-GUIDE.md)
 - **Implementation Summary**: [ANALYTICS-SUMMARY.md](ANALYTICS-SUMMARY.md)
 - **Existing Grafana Docs**: [docs/GRAFANA-SETUP.md](docs/GRAFANA-SETUP.md)
@@ -147,9 +148,9 @@ docker-compose restart grafana
 3. Check Prometheus targets: http://localhost:9090/targets (all should be "UP")
 
 **Grafana won't start?**
-1. Check Docker is running
-2. Check port 3001 is free
-3. View logs: `docker-compose logs grafana`
+1. Check service status: `sudo service grafana-server status`
+2. Check port 3000 is free
+3. View logs: `sudo journalctl -u grafana-server -n 100 --no-pager`
 
 **Can't connect to Prometheus?**
 1. Verify Prometheus is on localhost:9090 in WSL

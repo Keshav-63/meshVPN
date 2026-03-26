@@ -17,6 +17,15 @@ fi
 echo "Loading environment variables..."
 export $(cat .env | grep -v '^#' | xargs)
 
+# Normalize potential CRLF artifacts from .env and apply sensible defaults.
+K8S_CONFIG_PATH="${K8S_CONFIG_PATH%$'\r'}"
+K8S_NAMESPACE="${K8S_NAMESPACE%$'\r'}"
+K8S_IMAGE_PREFIX="${K8S_IMAGE_PREFIX%$'\r'}"
+
+if [ -z "$K8S_CONFIG_PATH" ]; then
+    K8S_CONFIG_PATH="$HOME/k3d-kubeconfig.yaml"
+fi
+
 # Verify kubeconfig exists
 if [ ! -f "$K8S_CONFIG_PATH" ]; then
     echo "ERROR: Kubeconfig not found at: $K8S_CONFIG_PATH"

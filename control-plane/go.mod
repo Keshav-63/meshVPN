@@ -1,6 +1,6 @@
 module MeshVPN-slef-hosting/control-plane
 
-go 1.26.1
+go 1.25.8
 
 require (
 	github.com/gin-gonic/gin v1.12.0
