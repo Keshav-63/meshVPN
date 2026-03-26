@@ -1,0 +1,367 @@
+basePath: /
+definitions:
+  internal_httpapi.AppLogsResponse:
+    properties:
+      application_logs:
+        example: Server listening on port 3000...
+        type: string
+      container:
+        example: myapp-container
+        type: string
+      deployment_id:
+        example: dep-123456
+        type: string
+      tail:
+        example: 200
+        type: integer
+    type: object
+  internal_httpapi.BuildLogsResponse:
+    properties:
+      build_logs:
+        example: 'Step 1/5 : FROM node:18...'
+        type: string
+      deployment_id:
+        example: dep-123456
+        type: string
+      status:
+        example: building
+        type: string
+    type: object
+  internal_httpapi.DeployRequestPayload:
+    properties:
+      build_args:
+        additionalProperties:
+          type: string
+        type: object
+      cpu_cores:
+        example: 0.5
+        type: number
+      cpu_limit_milli:
+        example: 1000
+        type: integer
+      cpu_request_milli:
+        example: 500
+        type: integer
+      cpu_target_utilization:
+        example: 70
+        type: integer
+      env:
+        additionalProperties:
+          type: string
+        type: object
+      max_replicas:
+        example: 3
+        type: integer
+      memory_mb:
+        example: 512
+        type: integer
+      min_replicas:
+        example: 1
+        type: integer
+      node_selector:
+        additionalProperties:
+          type: string
+        type: object
+      package:
+        description: small, medium, large
+        example: small
+        type: string
+      port:
+        example: 3000
+        type: integer
+      repo:
+        example: https://github.com/user/repo
+        type: string
+      scaling_mode:
+        description: Advanced options (optional - overridden by package if subscriber)
+        example: horizontal
+        type: string
+      subdomain:
+        description: Optional - auto-generated if empty
+        example: myapp
+        type: string
+    required:
+    - repo
+    type: object
+  internal_httpapi.DeployResponse:
+    properties:
+      autoscaling_enabled:
+        example: true
+        type: boolean
+      cpu_cores:
+        example: 0.5
+        type: number
+      cpu_target_utilization:
+        example: 70
+        type: integer
+      deployment_id:
+        example: dep-123456
+        type: string
+      max_replicas:
+        example: 3
+        type: integer
+      memory_mb:
+        example: 512
+        type: integer
+      message:
+        example: deployment queued
+        type: string
+      min_replicas:
+        example: 1
+        type: integer
+      package:
+        example: small
+        type: string
+      port:
+        example: 3000
+        type: integer
+      repo:
+        example: https://github.com/user/repo
+        type: string
+      scaling_mode:
+        example: horizontal
+        type: string
+      status:
+        example: pending
+        type: string
+      subdomain:
+        example: myapp
+        type: string
+      url:
+        example: https://myapp.keshavstack.tech
+        type: string
+    type: object
+  internal_httpapi.DeploymentInfo:
+    properties:
+      deployment_id:
+        example: dep-123456
+        type: string
+      package:
+        example: small
+        type: string
+      port:
+        example: 3000
+        type: integer
+      repo:
+        example: https://github.com/user/repo
+        type: string
+      scaling_mode:
+        example: horizontal
+        type: string
+      status:
+        example: running
+        type: string
+      subdomain:
+        example: myapp
+        type: string
+    type: object
+  internal_httpapi.DeploymentListResponse:
+    properties:
+      deployments:
+        items:
+          $ref: '#/definitions/internal_httpapi.DeploymentInfo'
+        type: array
+    type: object
+  internal_httpapi.ErrorResponse:
+    properties:
+      error:
+        example: Invalid request
+        type: string
+    type: object
+  internal_httpapi.HealthResponse:
+    properties:
+      status:
+        example: LaptopCloud running
+        type: string
+    type: object
+  internal_httpapi.WhoAmIResponse:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      provider:
+        example: github
+        type: string
+      sub:
+        example: user123
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    name: API Support
+    url: https://github.com/keshavstack/MeshVPN-slef-hosting
+  description: |-
+    API for deploying and managing applications on MeshVPN platform
+    This API provides endpoints for deploying applications, managing deployments, viewing logs, and monitoring analytics.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  title: MeshVPN Control Plane API
+  version: "1.0"
+paths:
+  /auth/whoami:
+    get:
+      description: Retrieve authenticated user's information
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_httpapi.WhoAmIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get current user information
+      tags:
+      - Authentication
+  /deploy:
+    post:
+      consumes:
+      - application/json
+      description: Queue a new application deployment from a git repository
+      parameters:
+      - description: Deployment configuration
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_httpapi.DeployRequestPayload'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/internal_httpapi.DeployResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Deploy a new application
+      tags:
+      - Deployments
+  /deployments:
+    get:
+      description: Get a list of all deployments for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_httpapi.DeploymentListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List all deployments
+      tags:
+      - Deployments
+  /deployments/{id}/app-logs:
+    get:
+      description: Retrieve runtime logs for a specific deployment
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 200
+        description: Number of log lines to retrieve (max 5000)
+        in: query
+        name: tail
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_httpapi.AppLogsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get application runtime logs
+      tags:
+      - Deployments
+  /deployments/{id}/build-logs:
+    get:
+      description: Retrieve build logs for a specific deployment
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_httpapi.BuildLogsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get deployment build logs
+      tags:
+      - Deployments
+  /health:
+    get:
+      description: Check if the API is running
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_httpapi.HealthResponse'
+      summary: Health check
+      tags:
+      - System
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter your JWT token in the format: Bearer {token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

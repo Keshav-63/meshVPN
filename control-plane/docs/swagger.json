@@ -1,0 +1,539 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API for deploying and managing applications on MeshVPN platform\nThis API provides endpoints for deploying applications, managing deployments, viewing logs, and monitoring analytics.",
+        "title": "MeshVPN Control Plane API",
+        "contact": {
+            "name": "API Support",
+            "url": "https://github.com/keshavstack/MeshVPN-slef-hosting"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/auth/whoami": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve authenticated user's information",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Get current user information",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.WhoAmIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deploy": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Queue a new application deployment from a git repository",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "Deploy a new application",
+                "parameters": [
+                    {
+                        "description": "Deployment configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.DeployRequestPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.DeployResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get a list of all deployments for the authenticated user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "List all deployments",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.DeploymentListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments/{id}/app-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve runtime logs for a specific deployment",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "Get application runtime logs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 200,
+                        "description": "Number of log lines to retrieve (max 5000)",
+                        "name": "tail",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.AppLogsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments/{id}/build-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve build logs for a specific deployment",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "Get deployment build logs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.BuildLogsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Check if the API is running",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_httpapi.HealthResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "internal_httpapi.AppLogsResponse": {
+            "type": "object",
+            "properties": {
+                "application_logs": {
+                    "type": "string",
+                    "example": "Server listening on port 3000..."
+                },
+                "container": {
+                    "type": "string",
+                    "example": "myapp-container"
+                },
+                "deployment_id": {
+                    "type": "string",
+                    "example": "dep-123456"
+                },
+                "tail": {
+                    "type": "integer",
+                    "example": 200
+                }
+            }
+        },
+        "internal_httpapi.BuildLogsResponse": {
+            "type": "object",
+            "properties": {
+                "build_logs": {
+                    "type": "string",
+                    "example": "Step 1/5 : FROM node:18..."
+                },
+                "deployment_id": {
+                    "type": "string",
+                    "example": "dep-123456"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "building"
+                }
+            }
+        },
+        "internal_httpapi.DeployRequestPayload": {
+            "type": "object",
+            "required": [
+                "repo"
+            ],
+            "properties": {
+                "build_args": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "cpu_cores": {
+                    "type": "number",
+                    "example": 0.5
+                },
+                "cpu_limit_milli": {
+                    "type": "integer",
+                    "example": 1000
+                },
+                "cpu_request_milli": {
+                    "type": "integer",
+                    "example": 500
+                },
+                "cpu_target_utilization": {
+                    "type": "integer",
+                    "example": 70
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "max_replicas": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "memory_mb": {
+                    "type": "integer",
+                    "example": 512
+                },
+                "min_replicas": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "node_selector": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "package": {
+                    "description": "small, medium, large",
+                    "type": "string",
+                    "example": "small"
+                },
+                "port": {
+                    "type": "integer",
+                    "example": 3000
+                },
+                "repo": {
+                    "type": "string",
+                    "example": "https://github.com/user/repo"
+                },
+                "scaling_mode": {
+                    "description": "Advanced options (optional - overridden by package if subscriber)",
+                    "type": "string",
+                    "example": "horizontal"
+                },
+                "subdomain": {
+                    "description": "Optional - auto-generated if empty",
+                    "type": "string",
+                    "example": "myapp"
+                }
+            }
+        },
+        "internal_httpapi.DeployResponse": {
+            "type": "object",
+            "properties": {
+                "autoscaling_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "cpu_cores": {
+                    "type": "number",
+                    "example": 0.5
+                },
+                "cpu_target_utilization": {
+                    "type": "integer",
+                    "example": 70
+                },
+                "deployment_id": {
+                    "type": "string",
+                    "example": "dep-123456"
+                },
+                "max_replicas": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "memory_mb": {
+                    "type": "integer",
+                    "example": 512
+                },
+                "message": {
+                    "type": "string",
+                    "example": "deployment queued"
+                },
+                "min_replicas": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "package": {
+                    "type": "string",
+                    "example": "small"
+                },
+                "port": {
+                    "type": "integer",
+                    "example": 3000
+                },
+                "repo": {
+                    "type": "string",
+                    "example": "https://github.com/user/repo"
+                },
+                "scaling_mode": {
+                    "type": "string",
+                    "example": "horizontal"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                },
+                "subdomain": {
+                    "type": "string",
+                    "example": "myapp"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://myapp.keshavstack.tech"
+                }
+            }
+        },
+        "internal_httpapi.DeploymentInfo": {
+            "type": "object",
+            "properties": {
+                "deployment_id": {
+                    "type": "string",
+                    "example": "dep-123456"
+                },
+                "package": {
+                    "type": "string",
+                    "example": "small"
+                },
+                "port": {
+                    "type": "integer",
+                    "example": 3000
+                },
+                "repo": {
+                    "type": "string",
+                    "example": "https://github.com/user/repo"
+                },
+                "scaling_mode": {
+                    "type": "string",
+                    "example": "horizontal"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "running"
+                },
+                "subdomain": {
+                    "type": "string",
+                    "example": "myapp"
+                }
+            }
+        },
+        "internal_httpapi.DeploymentListResponse": {
+            "type": "object",
+            "properties": {
+                "deployments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_httpapi.DeploymentInfo"
+                    }
+                }
+            }
+        },
+        "internal_httpapi.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "example": "Invalid request"
+                }
+            }
+        },
+        "internal_httpapi.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "LaptopCloud running"
+                }
+            }
+        },
+        "internal_httpapi.WhoAmIResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "github"
+                },
+                "sub": {
+                    "type": "string",
+                    "example": "user123"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Enter your JWT token in the format: Bearer {token}",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

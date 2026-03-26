@@ -14,7 +14,28 @@ import (
 	"MeshVPN-slef-hosting/control-plane/internal/service"
 	"MeshVPN-slef-hosting/control-plane/internal/store"
 	"MeshVPN-slef-hosting/control-plane/internal/telemetry"
+
+	_ "MeshVPN-slef-hosting/control-plane/docs" // Import generated swagger docs
 )
+
+// @title           MeshVPN Control Plane API
+// @version         1.0
+// @description     API for deploying and managing applications on MeshVPN platform
+// @description     This API provides endpoints for deploying applications, managing deployments, viewing logs, and monitoring analytics.
+
+// @contact.name   API Support
+// @contact.url    https://github.com/keshavstack/MeshVPN-slef-hosting
+
+// @license.name  MIT
+// @license.url   https://opensource.org/licenses/MIT
+
+// @host      localhost:8080
+// @BasePath  /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter your JWT token in the format: Bearer {token}
 
 func main() {
 	cfg := config.Load()

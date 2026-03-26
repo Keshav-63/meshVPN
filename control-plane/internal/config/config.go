@@ -16,6 +16,7 @@ type ControlPlaneConfig struct {
 	EnableCPUHPA       bool
 	K8sNamespace       string
 	K8sConfigPath      string
+	FrontendURL        string
 
 	// Multi-worker configuration
 	EnableMultiWorker      bool
@@ -110,6 +111,11 @@ func Load() ControlPlaneConfig {
 		}
 	}
 
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
 	return ControlPlaneConfig{
 		DatabaseURL:        dbURL,
 		SupabaseJWTSecret:  os.Getenv("SUPABASE_JWT_SECRET"),
@@ -120,6 +126,7 @@ func Load() ControlPlaneConfig {
 		EnableCPUHPA:       enableCPUHPA,
 		K8sNamespace:       k8sNamespace,
 		K8sConfigPath:      os.Getenv("K8S_CONFIG_PATH"),
+		FrontendURL:        frontendURL,
 
 		// Multi-worker fields
 		EnableMultiWorker:      enableMultiWorker,
