@@ -3,11 +3,14 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type ControlPlaneConfig struct {
 	DatabaseURL        string
+	SupabaseURL        string
+	SupabaseAnonKey    string
 	SupabaseJWTSecret  string
 	RequireAuth        bool
 	WorkerPollInterval time.Duration
@@ -118,7 +121,9 @@ func Load() ControlPlaneConfig {
 
 	return ControlPlaneConfig{
 		DatabaseURL:        dbURL,
-		SupabaseJWTSecret:  os.Getenv("SUPABASE_JWT_SECRET"),
+		SupabaseURL:        strings.TrimSpace(os.Getenv("SUPABASE_URL")),
+		SupabaseAnonKey:    strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
+		SupabaseJWTSecret:  strings.TrimSpace(os.Getenv("SUPABASE_JWT_SECRET")),
 		RequireAuth:        requireAuth,
 		WorkerPollInterval: pollInterval,
 		WorkerBatchSize:    batchSize,

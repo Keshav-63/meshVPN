@@ -234,3 +234,4 @@ pm.test('App logs response shape is valid', function () {
 4. If `/auth/whoami` fails:
 - verify `SUPABASE_JWT_SECRET`
 - verify token is from Supabase Auth (GitHub provider)
+  

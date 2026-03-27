@@ -64,10 +64,12 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 	}
 
 	protected := router.Group("/")
-	protected.Use(auth.RequireSupabaseGitHub(auth.MiddlewareConfig{
-		JWTSecret:   cfg.SupabaseJWTSecret,
-		RequireAuth: cfg.RequireAuth,
-		UserRepo:    userRepo,
+	protected.Use(auth.RequireSupabaseAuth(auth.MiddlewareConfig{
+		SupabaseURL:     cfg.SupabaseURL,
+		SupabaseAnonKey: cfg.SupabaseAnonKey,
+		JWTSecret:       cfg.SupabaseJWTSecret,
+		RequireAuth:     cfg.RequireAuth,
+		UserRepo:        userRepo,
 	}))
 
 	protected.GET("/auth/whoami", handlers.WhoAmI)
