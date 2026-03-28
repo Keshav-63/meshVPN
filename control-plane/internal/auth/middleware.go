@@ -141,7 +141,7 @@ func fetchSupabasePublicKey(supabaseURL, anonKey string) (*ecdsa.PublicKey, erro
 	jwksCacheTime = time.Now()
 	jwksCacheMux.Unlock()
 
-	logs.Infof("auth", "fetched and cached ES256 public key from Supabase JWKS")
+	logs.Infof("auth", "ES256 public key fetched and cached (valid for 1 hour)")
 	return publicKey, nil
 }
 
@@ -169,12 +169,10 @@ func parseECDSAPublicKey(pemKey string) (*ecdsa.PublicKey, error) {
 func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.RequireAuth {
-			logs.Debugf("auth", "auth disabled, passing through path=%s", c.FullPath())
 			c.Next()
 			return
 		}
 
-		logs.Debugf("auth", "checking authorization header path=%s", c.FullPath())
 		authz := strings.TrimSpace(c.GetHeader("Authorization"))
 		if authz == "" {
 			logs.Errorf("auth", "missing authorization header")
@@ -196,14 +194,10 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 		}
 
 		tokenText := strings.TrimSpace(parts[1])
-		logs.Debugf("auth", "validating JWT token")
 		claims := &Claims{}
 
 		// Parse token to check the algorithm in header
 		token, err := jwt.ParseWithClaims(tokenText, claims, func(t *jwt.Token) (any, error) {
-			alg := t.Header["alg"]
-			logs.Debugf("auth", "token algorithm: %v", alg)
-
 			// Support both HMAC (HS256) and ECDSA (ES256) signing methods
 			switch t.Method.(type) {
 			case *jwt.SigningMethodHMAC:
@@ -211,25 +205,22 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 				// The secret is base64-encoded, decode it first
 				secretBytes, decodeErr := base64.StdEncoding.DecodeString(cfg.JWTSecret)
 				if decodeErr != nil {
-					logs.Debugf("auth", "JWT secret is not base64, using as-is")
 					// If not base64, use as raw bytes
 					return []byte(cfg.JWTSecret), nil
 				}
-				logs.Debugf("auth", "using decoded JWT secret for HS256")
 				return secretBytes, nil
 
 			case *jwt.SigningMethodECDSA:
 				// ECDSA signing (ES256) - fetch public key from Supabase JWKS
 				// Only try JWKS if Supabase URL is configured
 				if cfg.SupabaseURL != "" {
-					logs.Infof("auth", "fetching ES256 public key from Supabase JWKS")
 					return fetchSupabasePublicKey(cfg.SupabaseURL, cfg.SupabaseAnonKey)
 				}
 				// Fallback: try to parse as PEM-encoded public key
 				return parseECDSAPublicKey(cfg.JWTSecret)
 
 			default:
-				return nil, fmt.Errorf("unexpected signing method: %v", alg)
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Method)
 			}
 		})
 		if err != nil || token == nil || !token.Valid {
@@ -265,8 +256,6 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 			provider = "email"
 		}
 
-		logs.Debugf("auth", "detected provider=%s from JWT token", provider)
-
 		// Allow GitHub OAuth and email-based authentication
 		allowedProviders := map[string]bool{
 			"github": true,
@@ -278,8 +267,6 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "unsupported authentication provider"})
 			return
 		}
-
-		logs.Infof("auth", "authenticated sub=%s email=%s provider=%s", claims.Sub, claims.Email, provider)
 		c.Set("auth.sub", claims.Sub)
 		c.Set("auth.email", claims.Email)
 		c.Set("auth.provider", provider)
@@ -306,7 +293,6 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 			// Set user object and subscription status in context
 			c.Set("auth.user", user)
 			c.Set("auth.is_subscriber", user.IsSubscriber)
-			logs.Debugf("auth", "loaded user sub=%s is_subscriber=%t", user.UserID, user.IsSubscriber)
 		}
 
 		c.Next()

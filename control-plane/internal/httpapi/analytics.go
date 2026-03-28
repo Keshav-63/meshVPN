@@ -15,6 +15,7 @@ import (
 
 type AnalyticsRepository interface {
 	GetMetrics(deploymentID string) (domain.DeploymentMetrics, error)
+	RecordRequest(req domain.DeploymentRequest) error
 }
 
 type AnalyticsHandler struct {

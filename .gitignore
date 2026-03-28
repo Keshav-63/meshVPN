@@ -35,3 +35,4 @@ control-plane/control-plane.exe
 Thumbs.db
 
 **/cache/
+**/data/

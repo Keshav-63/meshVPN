@@ -278,43 +278,99 @@ CLOUDFLARE_TUNNEL_TOKEN=<token_from_script_output>
 
 ## K3D Cluster Setup
 
-### 1. Create K3D Cluster
+### Option 1: Automated Setup (Recommended)
+
+Use the automated setup script that handles everything:
+
+```bash
+# From WSL
+cd ~/MeshVPN-slef-hosting  # or wherever you cloned the repo
+chmod +x scripts/setup-k3d-cluster.sh
+./scripts/setup-k3d-cluster.sh
+```
+
+This script will:
+- ✅ Delete existing cluster (if any)
+- ✅ Create fresh K3D cluster with proper configuration
+- ✅ Install and configure metrics-server
+- ✅ Create `meshvpn-apps` namespace
+- ✅ Export kubeconfig to `~/k3d-kubeconfig.yaml`
+- ✅ Verify everything is working
+
+After the script completes, update your `.env`:
+
+```env
+K8S_CONFIG_PATH=/home/your-username/k3d-kubeconfig.yaml
+```
+
+### Option 2: Manual Setup
+
+#### 1. Delete Existing Cluster (if any)
+
+```bash
+k3d cluster delete meshvpn
+```
+
+#### 2. Create K3D Cluster
 
 ```bash
 k3d cluster create meshvpn \
+  --api-port 6550 \
   --port "80:80@loadbalancer" \
   --port "443:443@loadbalancer" \
   --agents 0 \
-  --k3s-arg "--disable=traefik@server:0"
+  --servers 1 \
+  --wait
 ```
 
 **Why these flags?**
+- `--api-port 6550`: API server port (avoids conflicts)
 - `--port "80:80@loadbalancer"`: Expose port 80 for Traefik ingress
+- `--port "443:443@loadbalancer"`: Expose port 443 for HTTPS
 - `--agents 0`: Single-node cluster (sufficient for laptop)
-- `--disable=traefik`: We'll use our own Traefik configuration
+- `--servers 1`: One control-plane node
+- `--wait`: Wait for cluster to be ready
 
-### 2. Verify Cluster
+#### 3. Install Metrics-Server
+
+```bash
+# Export kubeconfig first
+export KUBECONFIG=~/.k3d/kubeconfig-meshvpn.yaml
+
+# Install metrics-server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Patch for K3D (disable TLS verification)
+kubectl patch deployment metrics-server -n kube-system --type='json' \
+  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+
+# Wait for metrics-server to be ready
+kubectl rollout status deployment/metrics-server -n kube-system --timeout=120s
+```
+
+#### 4. Verify Cluster
 
 ```bash
 kubectl cluster-info
 kubectl get nodes
+kubectl top nodes  # Should work after metrics-server is ready
 ```
 
 Expected output: 1 node in Ready state.
 
-### 3. Create Namespace
+#### 5. Create Namespace
 
 ```bash
 kubectl create namespace meshvpn-apps
 ```
 
-### 4. Export Kubeconfig (for Control-Plane to access)
+#### 6. Export Kubeconfig (for Control-Plane to access)
 
 ```bash
 k3d kubeconfig get meshvpn > ~/k3d-kubeconfig.yaml
 ```
 
-Update your `infra/.env`:
+Update your `.env`:
 
 ```env
 K8S_CONFIG_PATH=/home/your-username/k3d-kubeconfig.yaml

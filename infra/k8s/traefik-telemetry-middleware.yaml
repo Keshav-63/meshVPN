@@ -1,0 +1,28 @@
+# Traefik Middleware for MeshVPN Telemetry
+# This middleware captures HTTP request metrics and sends them to the control-plane
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: meshvpn-telemetry
+  namespace: meshvpn-apps
+spec:
+  plugin:
+    telemetry:
+      # This is a placeholder - Traefik plugins require installation
+      # For now, we'll use accessLog instead
+      enabled: false
+
+---
+# Alternative: Use Traefik AccessLog to capture metrics
+# This should be configured in the Traefik deployment itself
+# Add to Traefik command args:
+#   --accesslog=true
+#   --accesslog.format=json
+#   --accesslog.fields.headers.defaultmode=keep
+
+# For K3D/K3s, AccessLog is already enabled
+# We need to parse the logs and send to control-plane
+
+# Instead, we'll use a simpler approach:
+# Add annotations to each Ingress to enable per-deployment tracking

@@ -1,0 +1,113 @@
+═══════════════════════════════════════════════════════════════
+  MeshVPN Quick Start - Copy & Paste These Commands
+═══════════════════════════════════════════════════════════════
+
+1️⃣  SETUP K3D CLUSTER (Run from WSL)
+──────────────────────────────────────────────────────────────
+
+cd ~/MeshVPN-slef-hosting && chmod +x scripts/setup-k3d-cluster.sh && ./scripts/setup-k3d-cluster.sh
+
+
+2️⃣  START CONTROL-PLANE (Run from WSL)
+──────────────────────────────────────────────────────────────
+
+cd ~/MeshVPN-slef-hosting && ./start-control-plane.sh
+
+
+3️⃣  TEST TELEMETRY (After control-plane is running)
+──────────────────────────────────────────────────────────────
+
+curl -X POST http://localhost:8080/api/telemetry/deployment-request -H "Content-Type: application/json" -d '{"deployment_id":"test-123","status_code":200,"latency_ms":45.5,"bytes_sent":1024,"bytes_received":512,"path":"/test"}'
+
+
+4️⃣  VERIFY METRICS (Check Prometheus)
+──────────────────────────────────────────────────────────────
+
+curl http://localhost:8080/metrics | grep platform
+curl http://localhost:8080/metrics | grep deployment
+curl http://localhost:8080/metrics | grep worker_current_jobs
+
+
+5️⃣  CHECK DATABASE (Optional - if you have psql)
+──────────────────────────────────────────────────────────────
+
+# Connect to your Supabase database
+psql "postgresql://postgres.rpqlrujltxsaqixzefgb:Ghjklgfdsa@123@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres"
+
+# Run these queries:
+SELECT * FROM workers;
+SELECT COUNT(*) FROM deployment_requests;
+SELECT * FROM deployment_metrics;
+
+
+6️⃣  CHECK K8S METRICS (Verify metrics-server)
+──────────────────────────────────────────────────────────────
+
+export KUBECONFIG=~/k3d-kubeconfig.yaml
+kubectl top nodes
+kubectl top pods -n meshvpn-apps
+
+
+═══════════════════════════════════════════════════════════════
+  Alternative: Manual K3D Setup (if script fails)
+═══════════════════════════════════════════════════════════════
+
+k3d cluster delete meshvpn && k3d cluster create meshvpn --api-port 6550 --port "80:80@loadbalancer" --port "443:443@loadbalancer" --agents 0 --servers 1 --wait && k3d kubeconfig get meshvpn > ~/k3d-kubeconfig.yaml && export KUBECONFIG=~/k3d-kubeconfig.yaml && kubectl create namespace meshvpn-apps && kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml && kubectl patch deployment metrics-server -n kube-system --type='json' -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' && kubectl rollout status deployment/metrics-server -n kube-system --timeout=120s && echo "✓ Cluster setup complete!"
+
+
+═══════════════════════════════════════════════════════════════
+  Useful Commands
+═══════════════════════════════════════════════════════════════
+
+# Check control-plane logs
+tail -f /tmp/meshvpn-control-plane.log
+
+# List K3D clusters
+k3d cluster list
+
+# Delete cluster
+k3d cluster delete meshvpn
+
+# Restart cluster
+docker restart k3d-meshvpn-server-0 k3d-meshvpn-serverlb
+
+# Check pods
+kubectl get pods -A
+
+# Check deployments
+kubectl get deployments -n meshvpn-apps
+
+# Port forward Grafana (if using local Grafana)
+kubectl port-forward -n observability svc/grafana 3001:3000
+
+
+═══════════════════════════════════════════════════════════════
+  Expected Log Messages (Control-Plane)
+═══════════════════════════════════════════════════════════════
+
+✓ registered control-plane as worker worker_id=control-plane-local max_jobs=2
+✓ telemetry endpoints registered
+✓ analytics collector started interval=1m
+✓ multi-worker mode enabled strategy=smart control_plane_as_worker=true
+✓ analytics endpoints registered
+✓ platform analytics endpoints registered
+
+
+═══════════════════════════════════════════════════════════════
+  Troubleshooting
+═══════════════════════════════════════════════════════════════
+
+Problem: kubectl errors "couldn't get current server API group list"
+Solution: Run the K3D setup script to recreate cluster
+
+Problem: Metrics-server not working
+Solution: Wait 1-2 minutes, then try: kubectl top nodes
+
+Problem: Control-plane won't start
+Solution: Check logs in /tmp/meshvpn-control-plane.log
+
+Problem: Port 8080 already in use
+Solution: Kill existing process: sudo lsof -i :8080 && kill -9 <PID>
+
+
+═══════════════════════════════════════════════════════════════

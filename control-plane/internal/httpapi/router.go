@@ -38,7 +38,17 @@ type DeployRequestPayload struct {
 }
 
 func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService, userRepo auth.UserRepository, analyticsRepo AnalyticsRepository, workerRepo store.WorkerRepository, jobRepo store.JobRepository, deploymentRepo store.DeploymentRepository) *gin.Engine {
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	// Custom logger that skips /metrics endpoint
+	router.Use(func(c *gin.Context) {
+		if c.Request.URL.Path != "/metrics" {
+			gin.Logger()(c)
+		} else {
+			c.Next()
+		}
+	})
 
 	// CORS configuration for Next.js frontend
 	corsConfig := cors.Config{
@@ -56,6 +66,14 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 
 	router.GET("/health", handlers.HealthCheck)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Telemetry endpoints (public - no auth required, called by Traefik/proxies)
+	if analyticsRepo != nil {
+		telemetryHandler := NewTelemetryHandler(analyticsRepo)
+		router.POST("/api/telemetry/deployment-request", telemetryHandler.RecordDeploymentRequest)
+		router.POST("/api/telemetry/deployment-request/batch", telemetryHandler.RecordDeploymentRequestBatch)
+		logs.Infof("http", "telemetry endpoints registered")
+	}
 
 	// Create analytics handler
 	var analyticsHandler *AnalyticsHandler

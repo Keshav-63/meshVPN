@@ -63,11 +63,18 @@ func main() {
 
 	// Start either multi-worker distributor or single embedded worker
 	if cfg.EnableMultiWorker && deps.WorkerRepo != nil {
-		// Multi-worker mode: start job distributor
+		// Multi-worker mode: start job distributor (handles control-plane worker registration)
 		distributor := service.NewJobDistributor(deps.JobRepo, deps.WorkerRepo, cfg)
 		go distributor.Start(workerCtx)
 		logs.Infof("main", "multi-worker mode enabled strategy=%s control_plane_as_worker=%t",
 			cfg.JobPlacementStrategy, cfg.ControlPlaneAsWorker)
+
+		// If control-plane acts as worker, start embedded worker to execute jobs
+		if cfg.ControlPlaneAsWorker {
+			worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)
+			go worker.Start(workerCtx)
+			logs.Infof("main", "embedded worker started for control-plane (worker_id=%s)", cfg.ControlPlaneWorkerID)
+		}
 	} else {
 		// Single-worker mode: start embedded worker
 		worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)

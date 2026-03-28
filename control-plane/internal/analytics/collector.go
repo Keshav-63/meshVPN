@@ -72,10 +72,14 @@ func (c *MetricsCollector) Start(ctx context.Context, interval time.Duration) {
 
 // Aggregate collects and updates metrics for all active deployments
 func (c *MetricsCollector) Aggregate(ctx context.Context) {
+	startTime := time.Now()
 	logs.Debugf("analytics-collector", "aggregating metrics")
 
-	// Collect platform-level metrics first
-	c.aggregatePlatformMetrics(ctx)
+	// Collect platform-level metrics first (resilient to failures)
+	platformErr := c.aggregatePlatformMetrics(ctx)
+	if platformErr != nil {
+		logs.Errorf("analytics-collector", "platform metrics collection failed (non-fatal): %v", platformErr)
+	}
 
 	// Get all active deployments
 	deploymentIDs, err := c.analyticsRepo.GetAllActiveDeploymentIDs()
@@ -91,9 +95,12 @@ func (c *MetricsCollector) Aggregate(ctx context.Context) {
 
 	logs.Infof("analytics-collector", "processing %d active deployments", len(deploymentIDs))
 
+	successCount := 0
 	for _, deploymentID := range deploymentIDs {
 		if err := c.aggregateDeployment(ctx, deploymentID); err != nil {
 			logs.Errorf("analytics-collector", "failed to aggregate deployment_id=%s: %v", deploymentID, err)
+		} else {
+			successCount++
 		}
 	}
 
@@ -102,6 +109,10 @@ func (c *MetricsCollector) Aggregate(ctx context.Context) {
 	if err := c.analyticsRepo.CleanupOldRequests(sevenDaysAgo); err != nil {
 		logs.Errorf("analytics-collector", "cleanup failed: %v", err)
 	}
+
+	duration := time.Since(startTime)
+	logs.Infof("analytics-collector", "aggregation complete: %d/%d deployments succeeded in %v",
+		successCount, len(deploymentIDs), duration)
 }
 
 // aggregateDeployment collects metrics for a single deployment
@@ -175,7 +186,7 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 }
 
 // aggregatePlatformMetrics collects and updates platform-level metrics
-func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) {
+func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) error {
 	// Get all workers
 	workers, err := c.workerRepo.List(ctx)
 	if err != nil {
@@ -252,6 +263,8 @@ func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) {
 
 	logs.Debugf("analytics-collector", "platform metrics: workers=%d (idle=%d busy=%d offline=%d) deployments=%d (running=%d) pods=%d",
 		len(workers), idleWorkers, busyWorkers, offlineWorkers, len(deployments), runningCount, totalPods)
+
+	return nil
 }
 
 // getPodCounts queries Kubernetes for current and desired pod counts
