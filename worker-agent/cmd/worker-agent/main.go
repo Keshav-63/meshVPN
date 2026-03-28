@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -13,6 +14,9 @@ import (
 
 	"worker-agent/internal/agent"
 	"worker-agent/internal/config"
+	"worker-agent/internal/metrics"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -32,6 +36,22 @@ func main() {
 		}
 		log.Printf("Auto-detected Tailscale IP: %s", cfg.Worker.TailscaleIP)
 	}
+
+	// Register Prometheus metrics
+	metrics.Register()
+	log.Printf("Prometheus metrics registered")
+
+	// Set system resource metrics
+	metrics.SetSystemResources(cfg.Capabilities.CPUCores, cfg.Capabilities.MemoryGB)
+
+	// Start metrics HTTP server
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Printf("Starting metrics server on :9090")
+		if err := http.ListenAndServe(":9090", nil); err != nil {
+			log.Printf("Metrics server error: %v", err)
+		}
+	}()
 
 	// Create and start agent
 	workerAgent := agent.New(cfg)

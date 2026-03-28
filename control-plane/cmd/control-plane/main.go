@@ -14,7 +14,28 @@ import (
 	"MeshVPN-slef-hosting/control-plane/internal/service"
 	"MeshVPN-slef-hosting/control-plane/internal/store"
 	"MeshVPN-slef-hosting/control-plane/internal/telemetry"
+
+	_ "MeshVPN-slef-hosting/control-plane/docs" // Import generated swagger docs
 )
+
+// @title           MeshVPN Control Plane API
+// @version         1.0
+// @description     API for deploying and managing applications on MeshVPN platform
+// @description     This API provides endpoints for deploying applications, managing deployments, viewing logs, and monitoring analytics.
+
+// @contact.name   API Support
+// @contact.url    https://github.com/keshavstack/MeshVPN-slef-hosting
+
+// @license.name  MIT
+// @license.url   https://opensource.org/licenses/MIT
+
+// @host      localhost:8080
+// @BasePath  /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter your JWT token in the format: Bearer {token}
 
 func main() {
 	cfg := config.Load()
@@ -42,11 +63,18 @@ func main() {
 
 	// Start either multi-worker distributor or single embedded worker
 	if cfg.EnableMultiWorker && deps.WorkerRepo != nil {
-		// Multi-worker mode: start job distributor
+		// Multi-worker mode: start job distributor (handles control-plane worker registration)
 		distributor := service.NewJobDistributor(deps.JobRepo, deps.WorkerRepo, cfg)
 		go distributor.Start(workerCtx)
 		logs.Infof("main", "multi-worker mode enabled strategy=%s control_plane_as_worker=%t",
 			cfg.JobPlacementStrategy, cfg.ControlPlaneAsWorker)
+
+		// If control-plane acts as worker, start embedded worker to execute jobs
+		if cfg.ControlPlaneAsWorker {
+			worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)
+			go worker.Start(workerCtx)
+			logs.Infof("main", "embedded worker started for control-plane (worker_id=%s)", cfg.ControlPlaneWorkerID)
+		}
 	} else {
 		// Single-worker mode: start embedded worker
 		worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA)

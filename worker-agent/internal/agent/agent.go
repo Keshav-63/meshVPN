@@ -13,12 +13,15 @@ import (
 
 	"worker-agent/internal/config"
 	"worker-agent/internal/executor"
+	"worker-agent/internal/metrics"
 )
 
 type Agent struct {
-	cfg      *config.Config
-	executor *executor.JobExecutor
-	client   *http.Client
+	cfg          *config.Config
+	executor     *executor.JobExecutor
+	client       *http.Client
+	activeJobs   int
+	podsManaged  int
 }
 
 func New(cfg *config.Config) *Agent {
@@ -92,9 +95,14 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 }
 
 func (a *Agent) sendHeartbeat() {
+	status := "idle"
+	if a.activeJobs > 0 {
+		status = "busy"
+	}
+
 	payload := map[string]interface{}{
-		"status":       "idle", // TODO: Track actual status
-		"current_jobs": 0,      // TODO: Track actual job count
+		"status":       status,
+		"current_jobs": a.activeJobs,
 	}
 
 	data, _ := json.Marshal(payload)
@@ -103,13 +111,21 @@ func (a *Agent) sendHeartbeat() {
 	resp, err := a.client.Post(url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		log.Printf("Heartbeat failed: %v", err)
+		metrics.RecordHeartbeat(false)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		log.Printf("Heartbeat failed with status %d", resp.StatusCode)
+		metrics.RecordHeartbeat(false)
+	} else {
+		metrics.RecordHeartbeat(true)
 	}
+
+	// Update metrics
+	metrics.SetActiveJobs(a.activeJobs)
+	metrics.SetPodsManaged(a.podsManaged)
 }
 
 func (a *Agent) pollJobs(ctx context.Context) {
@@ -163,14 +179,27 @@ func (a *Agent) claimAndExecuteJob(ctx context.Context) {
 
 	log.Printf("Claimed job: %s", jobID)
 
+	// Track job execution
+	a.activeJobs++
+	metrics.SetActiveJobs(a.activeJobs)
+	startTime := time.Now()
+
 	// Execute job
 	if err := a.executor.Execute(ctx, job); err != nil {
 		log.Printf("Job execution failed: %v", err)
+		a.activeJobs--
+		duration := time.Since(startTime).Seconds()
+		metrics.RecordJobCompletion("failed", duration)
+		metrics.SetActiveJobs(a.activeJobs)
 		a.reportJobFailed(jobID, err.Error())
 		return
 	}
 
 	log.Printf("Job completed successfully: %s", jobID)
+	a.activeJobs--
+	duration := time.Since(startTime).Seconds()
+	metrics.RecordJobCompletion("success", duration)
+	metrics.SetActiveJobs(a.activeJobs)
 	a.reportJobComplete(jobID)
 }
 

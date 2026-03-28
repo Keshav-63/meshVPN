@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -71,10 +72,14 @@ func (c *MetricsCollector) Start(ctx context.Context, interval time.Duration) {
 
 // Aggregate collects and updates metrics for all active deployments
 func (c *MetricsCollector) Aggregate(ctx context.Context) {
+	startTime := time.Now()
 	logs.Debugf("analytics-collector", "aggregating metrics")
 
-	// Collect platform-level metrics first
-	c.aggregatePlatformMetrics(ctx)
+	// Collect platform-level metrics first (resilient to failures)
+	platformErr := c.aggregatePlatformMetrics(ctx)
+	if platformErr != nil {
+		logs.Errorf("analytics-collector", "platform metrics collection failed (non-fatal): %v", platformErr)
+	}
 
 	// Get all active deployments
 	deploymentIDs, err := c.analyticsRepo.GetAllActiveDeploymentIDs()
@@ -90,9 +95,12 @@ func (c *MetricsCollector) Aggregate(ctx context.Context) {
 
 	logs.Infof("analytics-collector", "processing %d active deployments", len(deploymentIDs))
 
+	successCount := 0
 	for _, deploymentID := range deploymentIDs {
 		if err := c.aggregateDeployment(ctx, deploymentID); err != nil {
 			logs.Errorf("analytics-collector", "failed to aggregate deployment_id=%s: %v", deploymentID, err)
+		} else {
+			successCount++
 		}
 	}
 
@@ -101,6 +109,10 @@ func (c *MetricsCollector) Aggregate(ctx context.Context) {
 	if err := c.analyticsRepo.CleanupOldRequests(sevenDaysAgo); err != nil {
 		logs.Errorf("analytics-collector", "cleanup failed: %v", err)
 	}
+
+	duration := time.Since(startTime)
+	logs.Infof("analytics-collector", "aggregation complete: %d/%d deployments succeeded in %v",
+		successCount, len(deploymentIDs), duration)
 }
 
 // aggregateDeployment collects metrics for a single deployment
@@ -153,9 +165,14 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 	metrics.LatencyP90Ms = p90
 	metrics.LatencyP99Ms = p99
 
-	// TODO: Get CPU/Memory usage from Kubernetes metrics-server
-	// This would require querying the metrics API
-	// For now, we'll leave these as zero
+	// Get CPU/Memory usage from Kubernetes metrics-server.
+	cpuPercent, memoryMB, err := c.getDeploymentResourceUsage(deploymentID)
+	if err != nil {
+		logs.Debugf("analytics-collector", "failed to get resource usage for %s: %v", deploymentID, err)
+	}
+	metrics.CPUUsagePercent = cpuPercent
+	metrics.MemoryUsageMB = memoryMB
+	telemetry.UpdateDeploymentResourceUsage(deploymentID, cpuPercent, memoryMB)
 
 	// Store aggregated metrics
 	if err := c.analyticsRepo.UpdateMetrics(metrics); err != nil {
@@ -169,7 +186,7 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 }
 
 // aggregatePlatformMetrics collects and updates platform-level metrics
-func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) {
+func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) error {
 	// Get all workers
 	workers, err := c.workerRepo.List(ctx)
 	if err != nil {
@@ -246,6 +263,8 @@ func (c *MetricsCollector) aggregatePlatformMetrics(ctx context.Context) {
 
 	logs.Debugf("analytics-collector", "platform metrics: workers=%d (idle=%d busy=%d offline=%d) deployments=%d (running=%d) pods=%d",
 		len(workers), idleWorkers, busyWorkers, offlineWorkers, len(deployments), runningCount, totalPods)
+
+	return nil
 }
 
 // getPodCounts queries Kubernetes for current and desired pod counts
@@ -279,4 +298,137 @@ func (c *MetricsCollector) getPodCounts(deploymentID string) (current, desired i
 	}
 
 	return current, desired, nil
+}
+
+// getDeploymentResourceUsage aggregates CPU and memory usage for a deployment.
+// CPU is reported as percentage of requested CPU; memory is reported in MB.
+func (c *MetricsCollector) getDeploymentResourceUsage(deploymentID string) (cpuPercent, memoryMB float64, err error) {
+	deploymentName := "app-" + deploymentID
+
+	output, err := runCommand(c.kubectl, "-n", c.namespace, "top", "pod", "-l", "app="+deploymentName, "--no-headers")
+	if err != nil {
+		return 0, 0, fmt.Errorf("kubectl top pod: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+		return 0, 0, nil
+	}
+
+	var totalMilliCPU int64
+	var totalMemoryMB float64
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		milli, err := parseCPUToMilli(fields[1])
+		if err == nil {
+			totalMilliCPU += milli
+		}
+
+		mb, err := parseMemoryToMB(fields[2])
+		if err == nil {
+			totalMemoryMB += mb
+		}
+	}
+
+	requestedMilliCPU, err := c.getRequestedCPUMilli(deploymentName)
+	if err != nil {
+		logs.Debugf("analytics-collector", "failed to get requested CPU for %s: %v", deploymentID, err)
+	}
+
+	if requestedMilliCPU > 0 {
+		cpuPercent = (float64(totalMilliCPU) / float64(requestedMilliCPU)) * 100.0
+	}
+
+	return cpuPercent, totalMemoryMB, nil
+}
+
+func (c *MetricsCollector) getRequestedCPUMilli(deploymentName string) (int64, error) {
+	output, err := runCommand(
+		c.kubectl,
+		"-n", c.namespace,
+		"get", "deployment", deploymentName,
+		"-o", "jsonpath={.spec.template.spec.containers[0].resources.requests.cpu}",
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	value := strings.TrimSpace(output)
+	if value == "" {
+		return 0, nil
+	}
+
+	return parseCPUToMilli(value)
+}
+
+func parseCPUToMilli(value string) (int64, error) {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return 0, fmt.Errorf("empty cpu value")
+	}
+
+	if strings.HasSuffix(v, "m") {
+		n, err := strconv.ParseInt(strings.TrimSuffix(v, "m"), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, err
+	}
+	return int64(f * 1000), nil
+}
+
+func parseMemoryToMB(value string) (float64, error) {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return 0, fmt.Errorf("empty memory value")
+	}
+
+	re := regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)([A-Za-z]+)?$`)
+	m := re.FindStringSubmatch(v)
+	if len(m) != 3 {
+		return 0, fmt.Errorf("invalid memory value: %s", value)
+	}
+
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, err
+	}
+
+	unit := strings.ToLower(m[2])
+	switch unit {
+	case "", "m":
+		return n / 1_000_000, nil
+	case "ki":
+		return n / 1024, nil
+	case "mi":
+		return n, nil
+	case "gi":
+		return n * 1024, nil
+	case "ti":
+		return n * 1024 * 1024, nil
+	case "k":
+		return n / 1_000_000, nil
+	case "g":
+		return n * 1000, nil
+	default:
+		return 0, fmt.Errorf("unsupported memory unit: %s", unit)
+	}
+}
+
+func runCommand(command string, args ...string) (string, error) {
+	cmd := exec.Command(command, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), err
+	}
+	return string(output), nil
 }

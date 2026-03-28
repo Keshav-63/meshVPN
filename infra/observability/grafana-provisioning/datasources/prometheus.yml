@@ -4,7 +4,11 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    # Connect to Prometheus running locally in WSL
+    url: http://localhost:9090
     isDefault: true
     uid: prometheus
     editable: true
+    jsonData:
+      timeInterval: 5s
+      httpMethod: POST

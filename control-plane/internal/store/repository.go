@@ -13,6 +13,7 @@ type DeploymentRepository interface {
 	Update(rec domain.DeploymentRecord)
 	Get(id string) (domain.DeploymentRecord, error)
 	List() []domain.DeploymentRecord
+	ListByUserID(userID string) []domain.DeploymentRecord
 }
 
 type InMemoryDeploymentRepository struct {
@@ -71,5 +72,21 @@ func (s *InMemoryDeploymentRepository) List() []domain.DeploymentRecord {
 		}
 	}
 
+	return result
+}
+
+func (s *InMemoryDeploymentRepository) ListByUserID(userID string) []domain.DeploymentRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]domain.DeploymentRecord, 0)
+	for _, id := range s.order {
+		rec, ok := s.records[id]
+		if ok && rec.UserID == userID {
+			result = append(result, rec)
+		}
+	}
+
+	logs.Debugf("store-memory", "list user deployments user_id=%s count=%d", userID, len(result))
 	return result
 }

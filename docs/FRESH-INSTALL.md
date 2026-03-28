@@ -204,7 +204,6 @@ k3d cluster create meshvpn \
   --port "443:443@loadbalancer" \
   --agents 0 \
   --servers 1 \
-  --k3s-arg "--disable=traefik@server:0"
 
 # Wait for cluster to be ready (may take 30-60 seconds)
 echo "Waiting for cluster to be ready..."
@@ -261,9 +260,7 @@ kubectl get namespaces
 
 ```bash
 # Export to a file that control-plane can use
-k3d kubeconfig write meshvpn > ~/k3d-kubeconfig.yaml
-
-# Verify the file exists
+k3d kubeconfig get meshvpn > ~/k3d-kubeconfig.yaml
 ls -lh ~/k3d-kubeconfig.yaml
 
 # Check contents (should have server pointing to localhost)

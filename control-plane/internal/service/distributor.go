@@ -77,6 +77,8 @@ func (d *JobDistributor) registerControlPlaneAsWorker(ctx context.Context) {
 		Status:      string(domain.WorkerStatusIdle),
 		Capabilities: domain.WorkerCapabilities{
 			Runtime:           "kubernetes",
+			CPUCores:          4,  // Advertise sufficient capacity for local deployments
+			MemoryGB:          8,  // Adjust based on your machine's capacity
 			MaxConcurrentJobs: d.maxJobsControlPlane,
 			SupportedPackages: []string{"small", "medium", "large"},
 		},
@@ -85,8 +87,8 @@ func (d *JobDistributor) registerControlPlaneAsWorker(ctx context.Context) {
 	}
 
 	d.workers.Register(ctx, worker)
-	logs.Infof("distributor", "registered control-plane as worker worker_id=%s max_jobs=%d",
-		worker.WorkerID, d.maxJobsControlPlane)
+	logs.Infof("distributor", "registered control-plane as worker worker_id=%s max_jobs=%d cpu=%d memory=%dGB",
+		worker.WorkerID, d.maxJobsControlPlane, worker.Capabilities.CPUCores, worker.Capabilities.MemoryGB)
 }
 
 func (d *JobDistributor) distributeJobs(ctx context.Context) {
