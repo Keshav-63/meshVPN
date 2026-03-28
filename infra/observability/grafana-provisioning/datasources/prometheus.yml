@@ -4,9 +4,8 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    # Connect to Prometheus running natively in WSL
-    # host.docker.internal resolves to WSL host from Docker container
-    url: http://host.docker.internal:9090
+    # Connect to Prometheus running locally in WSL
+    url: http://localhost:9090
     isDefault: true
     uid: prometheus
     editable: true

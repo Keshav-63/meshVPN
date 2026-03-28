@@ -199,16 +199,16 @@ The comprehensive dashboard loads automatically! No login needed.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                         Your Browser                         │
-│                    http://localhost:3001                     │
+│                    http://localhost:3000                     │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Grafana (Docker)                           │
-│                  - Visualizes metrics                        │
-│                  - Auto-provisioned dashboards               │
-│                  - Connects to Prometheus via                │
-│                    host.docker.internal:9090                 │
+│                   Grafana (WSL - localhost:3000)            │
+│                  - Visualizes metrics                       │
+│                  - Auto-provisioned dashboards              │
+│                  - Connects to Prometheus via               │
+│                    localhost:9090                │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
