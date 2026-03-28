@@ -26,8 +26,11 @@ docker compose down
 ```bash
 cd /mnt/c/Users/Shreeyansh/Desktop/Veltrix/meshVPN/infra/observability
 cd /mnt/c/Users/Shreeyansh/Desktop/Veltrix/meshVPN/infra/observability
-prometheus --config.file=prometheus.yml --web.listen-address=0.0.0.0:9090 --storage.tsdb.path=/tmp/prometheus-data```
-
+prometheus \
+  --config.file=/mnt/c/Users/Keshav\ suthar/Desktop/MeshVPN-slef-hosting/infra/observability/prometheus.yml \
+  --web.listen-address=0.0.0.0:9090 \
+  --storage.tsdb.path=/tmp/prometheus-data
+  
 In another terminal, verify:
 
 ```bash

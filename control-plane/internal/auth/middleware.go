@@ -46,7 +46,8 @@ type Claims struct {
 	Role     string `json:"role"`
 	Provider string `json:"provider"`
 	AppMeta  struct {
-		Provider string `json:"provider"`
+		Provider  string   `json:"provider"`
+		Providers []string `json:"providers"`
 	} `json:"app_metadata"`
 	UserMeta map[string]any `json:"user_metadata"`
 	jwt.RegisteredClaims
@@ -244,10 +245,27 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 			return
 		}
 
+		// Try multiple locations for provider (Supabase can store it in different places)
 		provider := strings.ToLower(strings.TrimSpace(claims.Provider))
 		if provider == "" {
 			provider = strings.ToLower(strings.TrimSpace(claims.AppMeta.Provider))
 		}
+		// Check providers array if still empty
+		if provider == "" && len(claims.AppMeta.Providers) > 0 {
+			provider = strings.ToLower(strings.TrimSpace(claims.AppMeta.Providers[0]))
+		}
+		// Check user_metadata as fallback
+		if provider == "" {
+			if providerMeta, ok := claims.UserMeta["provider"].(string); ok {
+				provider = strings.ToLower(strings.TrimSpace(providerMeta))
+			}
+		}
+		// Default to email if no provider found
+		if provider == "" {
+			provider = "email"
+		}
+
+		logs.Debugf("auth", "detected provider=%s from JWT token", provider)
 
 		// Allow GitHub OAuth and email-based authentication
 		allowedProviders := map[string]bool{

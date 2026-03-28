@@ -159,6 +159,11 @@ func (s *DeploymentService) ListDeployments() []domain.DeploymentRecord {
 	return s.repo.List()
 }
 
+func (s *DeploymentService) ListDeploymentsByUser(userID string) []domain.DeploymentRecord {
+	logs.Debugf("service", "listing deployments for user=%s", userID)
+	return s.repo.ListByUserID(userID)
+}
+
 func (s *DeploymentService) GetDeployment(id string) (domain.DeploymentRecord, error) {
 	logs.Debugf("service", "get deployment id=%s", id)
 	return s.repo.Get(strings.TrimSpace(id))

@@ -198,9 +198,24 @@ func (h *Handlers) Deploy(c *gin.Context) {
 // @Failure      401  {object}  ErrorResponse
 // @Router       /deployments [get]
 func (h *Handlers) ListDeployments(c *gin.Context) {
-	logs.Debugf("http", "list deployments requested_by=%s", c.GetString("auth.sub"))
+	// Get user from context (set by auth middleware)
+	user, userExists := c.Get("auth.user")
+
+	if !userExists {
+		// Fallback for when auth is disabled (dev mode)
+		logs.Debugf("http", "list deployments requested_by=%s (no user context)", c.GetString("auth.sub"))
+		c.JSON(http.StatusOK, gin.H{
+			"deployments": h.deploymentService.ListDeployments(),
+		})
+		return
+	}
+
+	actualUser := user.(domain.User)
+	logs.Debugf("http", "list deployments user_id=%s", actualUser.UserID)
+
+	// Return only deployments owned by this user
 	c.JSON(http.StatusOK, gin.H{
-		"deployments": h.deploymentService.ListDeployments(),
+		"deployments": h.deploymentService.ListDeploymentsByUser(actualUser.UserID),
 	})
 }
 
@@ -213,14 +228,29 @@ func (h *Handlers) ListDeployments(c *gin.Context) {
 // @Param        id   path      string  true  "Deployment ID"
 // @Success      200  {object}  BuildLogsResponse
 // @Failure      401  {object}  ErrorResponse
+// @Failure      403  {object}  ErrorResponse
 // @Failure      404  {object}  ErrorResponse
 // @Router       /deployments/{id}/build-logs [get]
 func (h *Handlers) GetBuildLogs(c *gin.Context) {
-	logs.Debugf("http", "build logs request deployment_id=%s", c.Param("id"))
-	rec, err := h.deploymentService.GetDeployment(c.Param("id"))
+	deploymentID := c.Param("id")
+	logs.Debugf("http", "build logs request deployment_id=%s", deploymentID)
+
+	rec, err := h.deploymentService.GetDeployment(deploymentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: err.Error()})
 		return
+	}
+
+	// Check user authorization
+	user, userExists := c.Get("auth.user")
+	if userExists {
+		actualUser := user.(domain.User)
+		if rec.UserID != "" && rec.UserID != actualUser.UserID {
+			logs.Errorf("http", "user %s attempted to access deployment %s owned by %s",
+				actualUser.UserID, deploymentID, rec.UserID)
+			c.JSON(http.StatusForbidden, ErrorResponse{Error: "access denied"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, BuildLogsResponse{
@@ -241,11 +271,14 @@ func (h *Handlers) GetBuildLogs(c *gin.Context) {
 // @Success      200   {object}  AppLogsResponse
 // @Failure      400   {object}  ErrorResponse
 // @Failure      401   {object}  ErrorResponse
+// @Failure      403   {object}  ErrorResponse
 // @Failure      404   {object}  ErrorResponse
 // @Failure      500   {object}  ErrorResponse
 // @Router       /deployments/{id}/app-logs [get]
 func (h *Handlers) GetAppLogs(c *gin.Context) {
-	logs.Debugf("http", "app logs request deployment_id=%s", c.Param("id"))
+	deploymentID := c.Param("id")
+	logs.Debugf("http", "app logs request deployment_id=%s", deploymentID)
+
 	tail := 200
 	if raw := strings.TrimSpace(c.Query("tail")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -259,7 +292,7 @@ func (h *Handlers) GetAppLogs(c *gin.Context) {
 		tail = parsed
 	}
 
-	rec, appLogs, err := h.deploymentService.GetAppLogs(c.Param("id"), tail)
+	rec, appLogs, err := h.deploymentService.GetAppLogs(deploymentID, tail)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusNotFound, ErrorResponse{Error: err.Error()})
@@ -276,6 +309,18 @@ func (h *Handlers) GetAppLogs(c *gin.Context) {
 			"application_logs": appLogs,
 		})
 		return
+	}
+
+	// Check user authorization
+	user, userExists := c.Get("auth.user")
+	if userExists {
+		actualUser := user.(domain.User)
+		if rec.UserID != "" && rec.UserID != actualUser.UserID {
+			logs.Errorf("http", "user %s attempted to access deployment %s owned by %s",
+				actualUser.UserID, deploymentID, rec.UserID)
+			c.JSON(http.StatusForbidden, ErrorResponse{Error: "access denied"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, AppLogsResponse{

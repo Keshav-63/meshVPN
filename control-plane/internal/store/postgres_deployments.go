@@ -239,6 +239,106 @@ ORDER BY started_at DESC
 	return result
 }
 
+// ListByUserID returns all deployments for a specific user
+func (r *PostgresDeploymentRepository) ListByUserID(userID string) []domain.DeploymentRecord {
+	const query = `
+SELECT deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+FROM deployments
+WHERE user_id = $1
+ORDER BY started_at DESC
+`
+
+	rows, err := r.db.Query(query, userID)
+	if err != nil {
+		logs.Errorf("store-postgres", "query user deployments failed user_id=%s err=%v", userID, err)
+		return []domain.DeploymentRecord{}
+	}
+	defer rows.Close()
+
+	result := make([]domain.DeploymentRecord, 0)
+	for rows.Next() {
+		var rec domain.DeploymentRecord
+		var nodeSelectorRaw []byte
+		var envRaw []byte
+		var buildArgsRaw []byte
+		var container sql.NullString
+		var image sql.NullString
+		var url sql.NullString
+		var errText sql.NullString
+		var buildLogs sql.NullString
+		var finishedAt sql.NullTime
+		var uid sql.NullString
+		var pkg sql.NullString
+
+		err := rows.Scan(
+			&rec.DeploymentID,
+			&rec.RequestedBy,
+			&uid,
+			&pkg,
+			&rec.Repo,
+			&rec.Subdomain,
+			&rec.Port,
+			&rec.ScalingMode,
+			&rec.MinReplicas,
+			&rec.MaxReplicas,
+			&rec.CPUTarget,
+			&rec.CPURequest,
+			&rec.CPULimit,
+			&nodeSelectorRaw,
+			&rec.CPUCores,
+			&rec.MemoryMB,
+			&container,
+			&image,
+			&url,
+			&rec.Status,
+			&errText,
+			&buildLogs,
+			&envRaw,
+			&buildArgsRaw,
+			&rec.StartedAt,
+			&finishedAt,
+		)
+		if err != nil {
+			continue
+		}
+
+		if uid.Valid {
+			rec.UserID = uid.String
+		}
+		if pkg.Valid {
+			rec.Package = pkg.String
+		}
+		if container.Valid {
+			rec.Container = container.String
+		}
+		if image.Valid {
+			rec.Image = image.String
+		}
+		if url.Valid {
+			rec.URL = url.String
+		}
+		if errText.Valid {
+			rec.Error = errText.String
+		}
+		if buildLogs.Valid {
+			rec.BuildLogs = buildLogs.String
+		}
+		if finishedAt.Valid {
+			t := finishedAt.Time
+			rec.FinishedAt = &t
+		}
+
+		rec.NodeSelector = decodeStringMapJSON(nodeSelectorRaw)
+		rec.Env = decodeStringMapJSON(envRaw)
+		rec.BuildArgs = decodeStringMapJSON(buildArgsRaw)
+
+		result = append(result, rec)
+	}
+
+	logs.Debugf("store-postgres", "list user deployments user_id=%s count=%d", userID, len(result))
+	return result
+}
+
 func (r *PostgresDeploymentRepository) upsert(rec domain.DeploymentRecord) error {
 	const stmt = `
 INSERT INTO deployments (
