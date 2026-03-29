@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -136,6 +137,18 @@ DO UPDATE SET
 
 // RecordRequest logs an individual request for percentile calculation
 func (r *PostgresAnalyticsRepository) RecordRequest(req domain.DeploymentRequest) error {
+	// If deployment_id looks like a subdomain (not a UUID), look up the actual deployment_id
+	deploymentID := req.DeploymentID
+	if !strings.Contains(deploymentID, "-") || len(deploymentID) < 20 {
+		// Likely a subdomain, try to resolve to deployment_id
+		const lookupQuery = `SELECT deployment_id FROM deployments WHERE subdomain = $1 LIMIT 1`
+		err := r.db.QueryRow(lookupQuery, deploymentID).Scan(&deploymentID)
+		if err != nil {
+			// Subdomain not found, skip this request (don't error, telemetry should be fire-and-forget)
+			return nil
+		}
+	}
+
 	const stmt = `
 INSERT INTO deployment_requests (
 	deployment_id, timestamp, status_code, latency_ms, bytes_sent, bytes_received, path
@@ -144,7 +157,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 	_, err := r.db.Exec(stmt,
-		req.DeploymentID,
+		deploymentID,
 		req.Timestamp,
 		req.StatusCode,
 		req.LatencyMs,
@@ -289,6 +302,86 @@ ORDER BY deployment_id
 	}
 
 	return deploymentIDs, nil
+}
+
+// GetDeploymentSummaries retrieves summary metrics for multiple deployments efficiently
+func (r *PostgresAnalyticsRepository) GetDeploymentSummaries(deploymentIDs []string) (map[string]domain.DeploymentMetrics, error) {
+	if len(deploymentIDs) == 0 {
+		return make(map[string]domain.DeploymentMetrics), nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(deploymentIDs))
+	args := make([]interface{}, len(deploymentIDs))
+	for i, id := range deploymentIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+SELECT deployment_id, request_count_total, request_count_1h, request_count_24h,
+       requests_per_second, bandwidth_sent_bytes, bandwidth_received_bytes,
+       latency_p50_ms, latency_p90_ms, latency_p99_ms,
+       current_pods, desired_pods, cpu_usage_percent, memory_usage_mb, last_updated
+FROM deployment_metrics
+WHERE deployment_id IN (%s)
+`, strings.Join(placeholders, ", "))
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query deployment summaries: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]domain.DeploymentMetrics)
+	for rows.Next() {
+		var metrics domain.DeploymentMetrics
+		var latencyP50, latencyP90, latencyP99 sql.NullFloat64
+		var cpuUsage, memoryUsage sql.NullFloat64
+
+		err := rows.Scan(
+			&metrics.DeploymentID,
+			&metrics.RequestCountTotal,
+			&metrics.RequestCount1h,
+			&metrics.RequestCount24h,
+			&metrics.RequestsPerSecond,
+			&metrics.BandwidthSentBytes,
+			&metrics.BandwidthRecvBytes,
+			&latencyP50,
+			&latencyP90,
+			&latencyP99,
+			&metrics.CurrentPods,
+			&metrics.DesiredPods,
+			&cpuUsage,
+			&memoryUsage,
+			&metrics.LastUpdated,
+		)
+
+		if err != nil {
+			logs.Errorf("analytics", "failed to scan metrics row: %v", err)
+			continue
+		}
+
+		if latencyP50.Valid {
+			metrics.LatencyP50Ms = latencyP50.Float64
+		}
+		if latencyP90.Valid {
+			metrics.LatencyP90Ms = latencyP90.Float64
+		}
+		if latencyP99.Valid {
+			metrics.LatencyP99Ms = latencyP99.Float64
+		}
+		if cpuUsage.Valid {
+			metrics.CPUUsagePercent = cpuUsage.Float64
+		}
+		if memoryUsage.Valid {
+			metrics.MemoryUsageMB = memoryUsage.Float64
+		}
+
+		result[metrics.DeploymentID] = metrics
+	}
+
+	return result, nil
 }
 
 // Helper function to convert float64 to sql.NullFloat64

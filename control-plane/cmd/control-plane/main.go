@@ -101,8 +101,17 @@ func main() {
 		analyticsRepo = deps.AnalyticsRepo
 	}
 
-	logs.Infof("main", "starting router require_auth=%t has_database=%t analytics=%t", cfg.RequireAuth, deps.HasDatabase, analyticsRepo != nil)
-	router := httpapi.NewRouter(cfg, deploymentService, userRepo, analyticsRepo, deps.WorkerRepo, deps.JobRepo, deps.DeploymentRepo)
+	// Initialize Kubernetes client and deployment details service
+	var detailsService *service.DeploymentDetailsService
+	if deps.HasDatabase && deps.AnalyticsRepo != nil {
+		k8sClient := analytics.NewKubernetesClient(cfg.K8sNamespace, "kubectl")
+		detailsService = service.NewDeploymentDetailsService(deps.DeploymentRepo, deps.AnalyticsRepo, k8sClient)
+		logs.Infof("main", "deployment details service initialized with k8s client")
+	}
+
+	logs.Infof("main", "starting router require_auth=%t has_database=%t analytics=%t details_service=%t",
+		cfg.RequireAuth, deps.HasDatabase, analyticsRepo != nil, detailsService != nil)
+	router := httpapi.NewRouter(cfg, deploymentService, detailsService, userRepo, analyticsRepo, deps.WorkerRepo, deps.JobRepo, deps.DeploymentRepo)
 
 	if err := router.Run("0.0.0.0:8080"); err != nil {
 		log.Fatalf("server exited: %v", err)

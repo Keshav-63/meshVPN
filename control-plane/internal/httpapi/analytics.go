@@ -31,6 +31,19 @@ func NewAnalyticsHandler(deploymentService *service.DeploymentService, analytics
 }
 
 // GetAnalytics returns current metrics for a deployment (GET /deployments/:id/analytics)
+// @Summary      Get deployment analytics
+// @Description  Get aggregated metrics for a specific deployment (backward compatible)
+// @Tags         Analytics
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Deployment ID"
+// @Success      200  {object}  map[string]interface{}  "Deployment analytics with metrics"
+// @Failure      401  {object}  ErrorResponse
+// @Failure      403  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /deployments/{id}/analytics [get]
 func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	deploymentID := c.Param("id")
 
@@ -106,6 +119,19 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 }
 
 // StreamAnalytics provides real-time metrics via Server-Sent Events (GET /deployments/:id/analytics/stream)
+// @Summary      Stream live deployment metrics
+// @Description  Stream real-time metrics updates every 5 seconds via Server-Sent Events
+// @Tags         Analytics
+// @Accept       json
+// @Produce      text/event-stream
+// @Param        id     path      string  true   "Deployment ID"
+// @Param        token  query     string  false  "JWT token (SSE doesn't support headers)"
+// @Success      200    {string}  string  "SSE stream"
+// @Failure      401    {object}  ErrorResponse
+// @Failure      403    {object}  ErrorResponse
+// @Failure      404    {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /deployments/{id}/analytics/stream [get]
 func (h *AnalyticsHandler) StreamAnalytics(c *gin.Context) {
 	deploymentID := c.Param("id")
 

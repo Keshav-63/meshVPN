@@ -32,6 +32,15 @@ func NewPlatformAnalyticsHandler(
 }
 
 // GET /platform/analytics
+// @Summary      Get platform analytics
+// @Description  Get system-wide metrics for admin/monitoring dashboard
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "Platform analytics"
+// @Failure      401  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /platform/analytics [get]
 func (h *PlatformAnalyticsHandler) GetPlatformAnalytics(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -149,6 +158,17 @@ func (h *PlatformAnalyticsHandler) GetPlatformAnalytics(c *gin.Context) {
 }
 
 // GET /platform/workers/:id/analytics
+// @Summary      Get worker analytics
+// @Description  Get analytics for a specific worker node
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Worker ID"
+// @Success      200  {object}  map[string]interface{}  "Worker analytics"
+// @Failure      401  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /platform/workers/{id}/analytics [get]
 func (h *PlatformAnalyticsHandler) GetWorkerAnalytics(c *gin.Context) {
 	ctx := c.Request.Context()
 	workerID := c.Param("id")

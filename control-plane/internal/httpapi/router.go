@@ -37,7 +37,7 @@ type DeployRequestPayload struct {
 	MemoryMB             int               `json:"memory_mb" example:"512"`
 }
 
-func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService, userRepo auth.UserRepository, analyticsRepo AnalyticsRepository, workerRepo store.WorkerRepository, jobRepo store.JobRepository, deploymentRepo store.DeploymentRepository) *gin.Engine {
+func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.DeploymentService, detailsService *service.DeploymentDetailsService, userRepo auth.UserRepository, analyticsRepo AnalyticsRepository, workerRepo store.WorkerRepository, jobRepo store.JobRepository, deploymentRepo store.DeploymentRepository) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 
@@ -64,12 +64,19 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 	// Initialize handlers
 	handlers := NewHandlers(deploymentService)
 
+	// Initialize deployment details handler (nil-safe, will be created later if service is available)
+	var detailsHandler *DeploymentDetailsHandler
+	if detailsService != nil {
+		detailsHandler = NewDeploymentDetailsHandler(detailsService, deploymentService)
+		logs.Infof("http", "deployment details handler initialized")
+	}
+
 	router.GET("/health", handlers.HealthCheck)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Telemetry endpoints (public - no auth required, called by Traefik/proxies)
 	if analyticsRepo != nil {
-		telemetryHandler := NewTelemetryHandler(analyticsRepo)
+		telemetryHandler := NewTelemetryHandler(analyticsRepo, deploymentService)
 		router.POST("/api/telemetry/deployment-request", telemetryHandler.RecordDeploymentRequest)
 		router.POST("/api/telemetry/deployment-request/batch", telemetryHandler.RecordDeploymentRequestBatch)
 		logs.Infof("http", "telemetry endpoints registered")
@@ -92,7 +99,17 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 
 	protected.GET("/auth/whoami", handlers.WhoAmI)
 	protected.POST("/deploy", handlers.Deploy)
-	protected.GET("/deployments", handlers.ListDeployments)
+
+	// Deployment list and details endpoints - use new comprehensive handlers if available
+	if detailsHandler != nil {
+		protected.GET("/deployments", detailsHandler.GetDeploymentsList)
+		protected.GET("/deployments/:id", detailsHandler.GetDeploymentDetails)
+		logs.Infof("http", "using comprehensive deployment endpoints")
+	} else {
+		protected.GET("/deployments", handlers.ListDeployments)
+		logs.Infof("http", "using basic deployment endpoints (details service not available)")
+	}
+
 	protected.GET("/deployments/:id/build-logs", handlers.GetBuildLogs)
 	protected.GET("/deployments/:id/app-logs", handlers.GetAppLogs)
 

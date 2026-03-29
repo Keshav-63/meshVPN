@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cat infra/observability/grafana-dashboards/*.json)"
+      "Bash(cat infra/observability/grafana-dashboards/*.json)",
+      "WebSearch"
     ]
   }
 }

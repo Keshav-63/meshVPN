@@ -1,6 +1,177 @@
 basePath: /
 definitions:
-  internal_httpapi.AppLogsResponse:
+  domain.DeploymentDetails:
+    properties:
+      deployment:
+        $ref: '#/definitions/domain.DeploymentRecord'
+      metrics:
+        $ref: '#/definitions/domain.DeploymentMetrics'
+      pods:
+        items:
+          $ref: '#/definitions/domain.PodMetrics'
+        type: array
+      resources:
+        $ref: '#/definitions/domain.ResourceAllocation'
+      scaling:
+        $ref: '#/definitions/domain.ScalingInfo'
+    type: object
+  domain.DeploymentMetrics:
+    properties:
+      bandwidth_received_bytes:
+        type: integer
+      bandwidth_sent_bytes:
+        type: integer
+      cpu_usage_percent:
+        type: number
+      current_pods:
+        type: integer
+      deployment_id:
+        type: string
+      desired_pods:
+        type: integer
+      last_updated:
+        type: string
+      latency_p50_ms:
+        type: number
+      latency_p90_ms:
+        type: number
+      latency_p99_ms:
+        type: number
+      memory_usage_mb:
+        type: number
+      request_count_1h:
+        type: integer
+      request_count_24h:
+        type: integer
+      request_count_total:
+        type: integer
+      requests_per_second:
+        type: number
+    type: object
+  domain.DeploymentRecord:
+    properties:
+      build_args:
+        additionalProperties:
+          type: string
+        type: object
+      build_logs:
+        type: string
+      container:
+        type: string
+      cpu_cores:
+        type: number
+      cpu_limit_milli:
+        type: integer
+      cpu_request_milli:
+        type: integer
+      cpu_target_utilization:
+        type: integer
+      deployment_id:
+        type: string
+      env:
+        additionalProperties:
+          type: string
+        type: object
+      error:
+        type: string
+      finished_at:
+        type: string
+      image:
+        type: string
+      max_replicas:
+        type: integer
+      memory_mb:
+        type: integer
+      min_replicas:
+        type: integer
+      node_selector:
+        additionalProperties:
+          type: string
+        type: object
+      package:
+        type: string
+      port:
+        type: integer
+      repo:
+        type: string
+      requested_by:
+        type: string
+      scaling_mode:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      subdomain:
+        type: string
+      url:
+        type: string
+      user_id:
+        type: string
+    type: object
+  domain.PodMetrics:
+    properties:
+      age:
+        description: e.g., "2h30m"
+        type: string
+      cpu_usage_milli:
+        description: Current CPU usage in millicores
+        type: integer
+      created_at:
+        type: string
+      memory_usage_mb:
+        description: Current memory usage in MB
+        type: number
+      pod_name:
+        type: string
+      ready:
+        type: boolean
+      restarts:
+        type: integer
+      status:
+        description: Running, Pending, Failed, etc.
+        type: string
+    type: object
+  domain.ResourceAllocation:
+    properties:
+      cpu_limit_milli:
+        type: integer
+      cpu_requested_milli:
+        type: integer
+      cpu_usage_milli:
+        type: integer
+      cpu_usage_percent:
+        description: vs requested
+        type: number
+      memory_limit_mb:
+        type: integer
+      memory_requested_mb:
+        type: integer
+      memory_usage_mb:
+        type: number
+      memory_usage_percent:
+        description: vs requested
+        type: number
+    type: object
+  domain.ScalingInfo:
+    properties:
+      cpu_target_utilization:
+        type: integer
+      current_pods:
+        type: integer
+      desired_pods:
+        type: integer
+      hpa_enabled:
+        type: boolean
+      max_replicas:
+        type: integer
+      min_replicas:
+        type: integer
+      mode:
+        description: '"none", "horizontal"'
+        type: string
+    type: object
+  httpapi.AppLogsResponse:
     properties:
       application_logs:
         example: Server listening on port 3000...
@@ -15,7 +186,16 @@ definitions:
         example: 200
         type: integer
     type: object
-  internal_httpapi.BuildLogsResponse:
+  httpapi.BatchDeploymentRequestPayload:
+    properties:
+      requests:
+        items:
+          $ref: '#/definitions/httpapi.DeploymentRequestPayload'
+        type: array
+    required:
+    - requests
+    type: object
+  httpapi.BuildLogsResponse:
     properties:
       build_logs:
         example: 'Step 1/5 : FROM node:18...'
@@ -27,7 +207,7 @@ definitions:
         example: building
         type: string
     type: object
-  internal_httpapi.DeployRequestPayload:
+  httpapi.DeployRequestPayload:
     properties:
       build_args:
         additionalProperties:
@@ -83,7 +263,7 @@ definitions:
     required:
     - repo
     type: object
-  internal_httpapi.DeployResponse:
+  httpapi.DeployResponse:
     properties:
       autoscaling_enabled:
         example: true
@@ -131,7 +311,7 @@ definitions:
         example: https://myapp.keshavstack.tech
         type: string
     type: object
-  internal_httpapi.DeploymentInfo:
+  httpapi.DeploymentInfo:
     properties:
       deployment_id:
         example: dep-123456
@@ -155,26 +335,47 @@ definitions:
         example: myapp
         type: string
     type: object
-  internal_httpapi.DeploymentListResponse:
+  httpapi.DeploymentListResponse:
     properties:
       deployments:
         items:
-          $ref: '#/definitions/internal_httpapi.DeploymentInfo'
+          $ref: '#/definitions/httpapi.DeploymentInfo'
         type: array
     type: object
-  internal_httpapi.ErrorResponse:
+  httpapi.DeploymentRequestPayload:
+    properties:
+      bytes_received:
+        type: integer
+      bytes_sent:
+        type: integer
+      deployment_id:
+        description: UUID or subdomain
+        type: string
+      latency_ms:
+        type: number
+      method:
+        type: string
+      path:
+        type: string
+      status_code:
+        type: integer
+      timestamp:
+        description: ISO 8601 format, optional
+        type: string
+    type: object
+  httpapi.ErrorResponse:
     properties:
       error:
         example: Invalid request
         type: string
     type: object
-  internal_httpapi.HealthResponse:
+  httpapi.HealthResponse:
     properties:
       status:
         example: LaptopCloud running
         type: string
     type: object
-  internal_httpapi.WhoAmIResponse:
+  httpapi.WhoAmIResponse:
     properties:
       email:
         example: user@example.com
@@ -200,6 +401,78 @@ info:
   title: MeshVPN Control Plane API
   version: "1.0"
 paths:
+  /api/telemetry/deployment-request:
+    post:
+      consumes:
+      - application/json
+      description: Records metrics for a single HTTP request to a user deployment
+      parameters:
+      - description: Request metrics
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.DeploymentRequestPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Record deployment HTTP request metrics
+      tags:
+      - Telemetry
+  /api/telemetry/deployment-request/batch:
+    post:
+      consumes:
+      - application/json
+      description: Records metrics for multiple HTTP requests to user deployments
+        in a batch
+      parameters:
+      - description: Batch of request metrics
+        in: body
+        name: requests
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.BatchDeploymentRequestPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Record multiple deployment HTTP request metrics
+      tags:
+      - Telemetry
   /auth/whoami:
     get:
       description: Retrieve authenticated user's information
@@ -209,11 +482,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_httpapi.WhoAmIResponse'
+            $ref: '#/definitions/httpapi.WhoAmIResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get current user information
@@ -230,26 +503,26 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/internal_httpapi.DeployRequestPayload'
+          $ref: '#/definitions/httpapi.DeployRequestPayload'
       produces:
       - application/json
       responses:
         "202":
           description: Accepted
           schema:
-            $ref: '#/definitions/internal_httpapi.DeployResponse'
+            $ref: '#/definitions/httpapi.DeployResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Deploy a new application
@@ -264,16 +537,134 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_httpapi.DeploymentListResponse'
+            $ref: '#/definitions/httpapi.DeploymentListResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
       security:
       - BearerAuth: []
       summary: List all deployments
       tags:
       - Deployments
+  /deployments/{id}:
+    get:
+      description: Retrieve complete deployment information including config, metrics,
+        pods, and resources
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.DeploymentDetails'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get comprehensive deployment details
+      tags:
+      - Deployments
+  /deployments/{id}/analytics:
+    get:
+      consumes:
+      - application/json
+      description: Get aggregated metrics for a specific deployment (backward compatible)
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deployment analytics with metrics
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get deployment analytics
+      tags:
+      - Analytics
+  /deployments/{id}/analytics/stream:
+    get:
+      consumes:
+      - application/json
+      description: Stream real-time metrics updates every 5 seconds via Server-Sent
+        Events
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: JWT token (SSE doesn't support headers)
+        in: query
+        name: token
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Stream live deployment metrics
+      tags:
+      - Analytics
   /deployments/{id}/app-logs:
     get:
       description: Retrieve runtime logs for a specific deployment
@@ -294,23 +685,27 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_httpapi.AppLogsResponse'
+            $ref: '#/definitions/httpapi.AppLogsResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get application runtime logs
@@ -331,15 +726,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_httpapi.BuildLogsResponse'
+            $ref: '#/definitions/httpapi.BuildLogsResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/internal_httpapi.ErrorResponse'
+            $ref: '#/definitions/httpapi.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get deployment build logs
@@ -354,10 +753,90 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_httpapi.HealthResponse'
+            $ref: '#/definitions/httpapi.HealthResponse'
       summary: Health check
       tags:
       - System
+  /platform/analytics:
+    get:
+      consumes:
+      - application/json
+      description: Get system-wide metrics for admin/monitoring dashboard
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Platform analytics
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get platform analytics
+      tags:
+      - Platform
+  /platform/workers/{id}/analytics:
+    get:
+      consumes:
+      - application/json
+      description: Get analytics for a specific worker node
+      parameters:
+      - description: Worker ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Worker analytics
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get worker analytics
+      tags:
+      - Platform
+  /workers:
+    get:
+      consumes:
+      - application/json
+      description: Get list of all worker nodes
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of workers
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List workers
+      tags:
+      - Platform
 securityDefinitions:
   BearerAuth:
     description: 'Enter your JWT token in the format: Bearer {token}'

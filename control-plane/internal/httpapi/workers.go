@@ -156,6 +156,16 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 }
 
 // GET /api/workers
+// @Summary      List workers
+// @Description  Get list of all worker nodes
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "List of workers"
+// @Failure      401  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /workers [get]
 func (h *WorkerHandler) List(c *gin.Context) {
 	workers, err := h.workerRepo.List(c.Request.Context())
 	if err != nil {

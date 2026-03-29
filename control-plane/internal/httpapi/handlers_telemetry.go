@@ -6,6 +6,7 @@ import (
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
+	"MeshVPN-slef-hosting/control-plane/internal/service"
 	"MeshVPN-slef-hosting/control-plane/internal/telemetry"
 
 	"github.com/gin-gonic/gin"
@@ -13,21 +14,23 @@ import (
 
 // TelemetryHandler handles incoming telemetry data from deployment proxies/middlewares
 type TelemetryHandler struct {
-	analyticsRepo AnalyticsRepository
+	analyticsRepo     AnalyticsRepository
+	deploymentService *service.DeploymentService
 }
 
 // NewTelemetryHandler creates a new telemetry handler
-func NewTelemetryHandler(analyticsRepo AnalyticsRepository) *TelemetryHandler {
+func NewTelemetryHandler(analyticsRepo AnalyticsRepository, deploymentService *service.DeploymentService) *TelemetryHandler {
 	return &TelemetryHandler{
-		analyticsRepo: analyticsRepo,
+		analyticsRepo:     analyticsRepo,
+		deploymentService: deploymentService,
 	}
 }
 
 // DeploymentRequestPayload represents a single HTTP request to a deployment
 type DeploymentRequestPayload struct {
-	DeploymentID  string  `json:"deployment_id" binding:"required"`
-	StatusCode    int     `json:"status_code" binding:"required"`
-	LatencyMs     float64 `json:"latency_ms" binding:"required"`
+	DeploymentID  string  `json:"deployment_id"` // UUID or subdomain
+	StatusCode    int     `json:"status_code"`
+	LatencyMs     float64 `json:"latency_ms"`
 	BytesSent     int64   `json:"bytes_sent"`
 	BytesReceived int64   `json:"bytes_received"`
 	Path          string  `json:"path"`
@@ -56,6 +59,16 @@ func (h *TelemetryHandler) RecordDeploymentRequest(c *gin.Context) {
 		return
 	}
 
+	// Validate required fields
+	if payload.DeploymentID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "deployment_id is required"})
+		return
+	}
+
+	// Use payload deployment_id as-is (can be UUID or subdomain)
+	// The metrics collector will handle subdomain lookups when aggregating
+	deploymentID := payload.DeploymentID
+
 	// Parse timestamp or use current time
 	var timestamp time.Time
 	if payload.Timestamp != "" {
@@ -72,7 +85,7 @@ func (h *TelemetryHandler) RecordDeploymentRequest(c *gin.Context) {
 
 	// Update Prometheus metrics
 	telemetry.ObserveDeploymentRequest(
-		payload.DeploymentID,
+		deploymentID,
 		payload.StatusCode,
 		payload.LatencyMs/1000.0, // Convert ms to seconds for Prometheus
 		payload.BytesSent,
@@ -82,7 +95,7 @@ func (h *TelemetryHandler) RecordDeploymentRequest(c *gin.Context) {
 	// Record in database if analytics repository is available
 	if h.analyticsRepo != nil {
 		req := domain.DeploymentRequest{
-			DeploymentID:  payload.DeploymentID,
+			DeploymentID:  deploymentID,
 			Timestamp:     timestamp,
 			StatusCode:    payload.StatusCode,
 			LatencyMs:     payload.LatencyMs,
