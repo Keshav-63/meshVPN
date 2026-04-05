@@ -14,6 +14,7 @@ A complete self-hosting platform that turns your laptop into a deployment engine
 
 ## Quick Start
 
+
 ### 🚀 New User? Start Here!
 
 **15-minute setup with minimal resources (~800-1300 MB RAM):**
