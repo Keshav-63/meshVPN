@@ -153,11 +153,11 @@ fi
 # Get control-plane IP
 echo ""
 echo "Enter the control-plane Tailscale IP address:"
-echo "(Default: 100.88.151.60)"
 read -p "Control-plane IP: " CONTROL_PLANE_IP
 
 if [ -z "$CONTROL_PLANE_IP" ]; then
-    CONTROL_PLANE_IP="100.88.151.60"
+    echo -e "${RED}Control-plane IP cannot be empty!${NC}"
+    exit 1
 fi
 
 # Test connection to control-plane
@@ -227,8 +227,10 @@ echo -e "${YELLOW}[6/6] Building worker agent...${NC}"
 if [ ! -f "go.mod" ]; then
     echo "Initializing Go module..."
     go mod init worker-agent
-    go mod tidy
 fi
+
+echo "Syncing Go module dependencies..."
+go mod tidy
 
 echo "Building worker agent binary..."
 go build -o worker-agent cmd/worker-agent/main.go

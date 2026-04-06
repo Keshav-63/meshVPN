@@ -136,7 +136,7 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 
 	// Worker API endpoints (no user auth - workers use internal routes)
 	if workerRepo != nil && jobRepo != nil {
-		workerHandler := NewWorkerHandler(workerRepo, jobRepo)
+		workerHandler := NewWorkerHandler(workerRepo, jobRepo, deploymentRepo)
 
 		workerAPI := router.Group("/api/workers")
 		// TODO: Add worker authentication middleware (shared secret or mTLS)

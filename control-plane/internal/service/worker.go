@@ -18,13 +18,17 @@ type DeploymentWorker struct {
 	runner       *runtime.Runner
 	pollInterval time.Duration
 	enableCPUHPA bool
+	workerID     string
 }
 
-func NewDeploymentWorker(repo store.DeploymentRepository, jobs store.JobRepository, runner *runtime.Runner, pollInterval time.Duration, enableCPUHPA bool) *DeploymentWorker {
+func NewDeploymentWorker(repo store.DeploymentRepository, jobs store.JobRepository, runner *runtime.Runner, pollInterval time.Duration, enableCPUHPA bool, workerID string) *DeploymentWorker {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
-	return &DeploymentWorker{repo: repo, jobs: jobs, runner: runner, pollInterval: pollInterval, enableCPUHPA: enableCPUHPA}
+	if strings.TrimSpace(workerID) == "" {
+		workerID = "control-plane-local"
+	}
+	return &DeploymentWorker{repo: repo, jobs: jobs, runner: runner, pollInterval: pollInterval, enableCPUHPA: enableCPUHPA, workerID: workerID}
 }
 
 func (w *DeploymentWorker) Start(ctx context.Context) {
@@ -83,27 +87,28 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 		}
 		finished := time.Now().UTC()
 		w.repo.Update(domain.DeploymentRecord{
-			DeploymentID: rec.DeploymentID,
-			RequestedBy:  rec.RequestedBy,
-			Repo:         rec.Repo,
-			Subdomain:    rec.Subdomain,
-			Port:         rec.Port,
-			ScalingMode:  rec.ScalingMode,
-			MinReplicas:  rec.MinReplicas,
-			MaxReplicas:  rec.MaxReplicas,
-			CPUTarget:    rec.CPUTarget,
-			CPURequest:   rec.CPURequest,
-			CPULimit:     rec.CPULimit,
-			NodeSelector: rec.NodeSelector,
-			CPUCores:     rec.CPUCores,
-			MemoryMB:     rec.MemoryMB,
-			Status:       "failed",
-			Error:        deployErr.Error(),
-			BuildLogs:    buildLogs,
-			Env:          rec.Env,
-			BuildArgs:    rec.BuildArgs,
-			StartedAt:    rec.StartedAt,
-			FinishedAt:   &finished,
+			DeploymentID:  rec.DeploymentID,
+			OwnerWorkerID: w.workerID,
+			RequestedBy:   rec.RequestedBy,
+			Repo:          rec.Repo,
+			Subdomain:     rec.Subdomain,
+			Port:          rec.Port,
+			ScalingMode:   rec.ScalingMode,
+			MinReplicas:   rec.MinReplicas,
+			MaxReplicas:   rec.MaxReplicas,
+			CPUTarget:     rec.CPUTarget,
+			CPURequest:    rec.CPURequest,
+			CPULimit:      rec.CPULimit,
+			NodeSelector:  rec.NodeSelector,
+			CPUCores:      rec.CPUCores,
+			MemoryMB:      rec.MemoryMB,
+			Status:        "failed",
+			Error:         deployErr.Error(),
+			BuildLogs:     buildLogs,
+			Env:           rec.Env,
+			BuildArgs:     rec.BuildArgs,
+			StartedAt:     rec.StartedAt,
+			FinishedAt:    &finished,
 		})
 		_ = w.jobs.MarkFailed(ctx, job.JobID, deployErr.Error())
 		logs.Errorf("worker", "deploy failed deployment_id=%s err=%v", rec.DeploymentID, deployErr)
@@ -129,29 +134,30 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 	}
 
 	w.repo.Update(domain.DeploymentRecord{
-		DeploymentID: result.DeploymentID,
-		RequestedBy:  rec.RequestedBy,
-		Repo:         result.Repo,
-		Subdomain:    result.Subdomain,
-		Port:         result.Port,
-		ScalingMode:  rec.ScalingMode,
-		MinReplicas:  rec.MinReplicas,
-		MaxReplicas:  rec.MaxReplicas,
-		CPUTarget:    rec.CPUTarget,
-		CPURequest:   rec.CPURequest,
-		CPULimit:     rec.CPULimit,
-		NodeSelector: rec.NodeSelector,
-		CPUCores:     rec.CPUCores,
-		MemoryMB:     rec.MemoryMB,
-		Container:    result.Container,
-		Image:        result.Image,
-		URL:          result.URL,
-		Status:       "running",
-		BuildLogs:    hpaBuildLogs,
-		Env:          rec.Env,
-		BuildArgs:    rec.BuildArgs,
-		StartedAt:    rec.StartedAt,
-		FinishedAt:   &finished,
+		DeploymentID:  result.DeploymentID,
+		OwnerWorkerID: w.workerID,
+		RequestedBy:   rec.RequestedBy,
+		Repo:          result.Repo,
+		Subdomain:     result.Subdomain,
+		Port:          result.Port,
+		ScalingMode:   rec.ScalingMode,
+		MinReplicas:   rec.MinReplicas,
+		MaxReplicas:   rec.MaxReplicas,
+		CPUTarget:     rec.CPUTarget,
+		CPURequest:    rec.CPURequest,
+		CPULimit:      rec.CPULimit,
+		NodeSelector:  rec.NodeSelector,
+		CPUCores:      rec.CPUCores,
+		MemoryMB:      rec.MemoryMB,
+		Container:     result.Container,
+		Image:         result.Image,
+		URL:           result.URL,
+		Status:        "running",
+		BuildLogs:     hpaBuildLogs,
+		Env:           rec.Env,
+		BuildArgs:     rec.BuildArgs,
+		StartedAt:     rec.StartedAt,
+		FinishedAt:    &finished,
 	})
 
 	_ = w.jobs.MarkDone(ctx, job.JobID)

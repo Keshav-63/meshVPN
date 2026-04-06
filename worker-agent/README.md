@@ -2,6 +2,30 @@
 
 Remote worker binary for distributed deployment across multiple machines using Tailscale mesh network.
 
+## Latest Worker Changes
+
+No new fields are required in `agent.yaml` for the recent failover/rebalance rollout.
+
+Worker update requirements:
+
+1. Pull latest code for `worker-agent/`
+2. Rebuild worker binary
+3. Restart worker process/service
+
+Why restart is required:
+
+1. Worker now reports `deployment_id` when sending `job-complete` and `job-failed`
+2. This keeps deployment ownership/status accurate during failover and rebalance
+
+Quick update commands:
+
+```bash
+cd worker-agent
+go mod tidy
+go build -o worker-agent cmd/worker-agent/main.go
+./worker-agent -config agent.yaml
+```
+
 ## Quick Start
 
 ### 1. Install Prerequisites on Worker Machine

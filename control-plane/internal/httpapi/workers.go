@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
@@ -13,12 +14,14 @@ import (
 type WorkerHandler struct {
 	workerRepo store.WorkerRepository
 	jobRepo    store.JobRepository
+	deployRepo store.DeploymentRepository
 }
 
-func NewWorkerHandler(workerRepo store.WorkerRepository, jobRepo store.JobRepository) *WorkerHandler {
+func NewWorkerHandler(workerRepo store.WorkerRepository, jobRepo store.JobRepository, deployRepo store.DeploymentRepository) *WorkerHandler {
 	return &WorkerHandler{
 		workerRepo: workerRepo,
 		jobRepo:    jobRepo,
+		deployRepo: deployRepo,
 	}
 }
 
@@ -68,7 +71,7 @@ func (h *WorkerHandler) Heartbeat(c *gin.Context) {
 	workerID := c.Param("id")
 
 	var req struct {
-		Status      string `json:"status"`       // idle, busy
+		Status      string `json:"status"` // idle, busy
 		CurrentJobs int    `json:"current_jobs"`
 	}
 	c.BindJSON(&req)
@@ -115,7 +118,8 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 	workerID := c.Param("id")
 
 	var req struct {
-		JobID string `json:"job_id" binding:"required"`
+		JobID        string `json:"job_id" binding:"required"`
+		DeploymentID string `json:"deployment_id"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id required"})
@@ -128,6 +132,19 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 	// Decrement worker job count
 	h.workerRepo.DecrementJobCount(c.Request.Context(), workerID)
 
+	if h.deployRepo != nil && req.DeploymentID != "" {
+		rec, err := h.deployRepo.Get(req.DeploymentID)
+		if err == nil {
+			n := rec
+			n.Status = "running"
+			n.OwnerWorkerID = workerID
+			n.Error = ""
+			n.FinishedAt = nil
+			n.BuildLogs = n.BuildLogs + "\n=== worker ===\nremote worker reported job complete\n"
+			h.deployRepo.Update(n)
+		}
+	}
+
 	logs.Infof("workers", "job completed worker_id=%s job_id=%s", workerID, req.JobID)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -137,8 +154,9 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 	workerID := c.Param("id")
 
 	var req struct {
-		JobID string `json:"job_id" binding:"required"`
-		Error string `json:"error"`
+		JobID        string `json:"job_id" binding:"required"`
+		DeploymentID string `json:"deployment_id"`
+		Error        string `json:"error"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id required"})
@@ -150,6 +168,20 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 
 	// Decrement worker job count
 	h.workerRepo.DecrementJobCount(c.Request.Context(), workerID)
+
+	if h.deployRepo != nil && req.DeploymentID != "" {
+		rec, err := h.deployRepo.Get(req.DeploymentID)
+		if err == nil {
+			finishedAt := time.Now().UTC()
+			n := rec
+			n.Status = "failed"
+			n.OwnerWorkerID = workerID
+			n.Error = req.Error
+			n.FinishedAt = &finishedAt
+			n.BuildLogs = n.BuildLogs + "\n=== worker error ===\n" + req.Error + "\n"
+			h.deployRepo.Update(n)
+		}
+	}
 
 	logs.Errorf("workers", "job failed worker_id=%s job_id=%s err=%s", workerID, req.JobID, req.Error)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

@@ -2,26 +2,36 @@ package service
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/config"
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
 	"MeshVPN-slef-hosting/control-plane/internal/store"
+
+	"github.com/google/uuid"
 )
 
 type JobDistributor struct {
-	jobs               store.JobRepository
-	workers            store.WorkerRepository
-	enabled            bool
-	controlPlaneWorker string // Worker ID for control-plane if acting as worker
-	placementStrategy  string // smart, local-first, remote-only
-	maxJobsControlPlane int   // Max concurrent jobs for control-plane worker
+	jobs                store.JobRepository
+	workers             store.WorkerRepository
+	deployments         store.DeploymentRepository
+	enabled             bool
+	controlPlaneWorker  string // Worker ID for control-plane if acting as worker
+	placementStrategy   string // smart, local-first, remote-only
+	maxJobsControlPlane int    // Max concurrent jobs for control-plane worker
+	heartbeatTimeout    time.Duration
+	rebalanceCooldown   time.Duration
+	rebalanceMinDelta   int
+	lastShiftByDeploy   map[string]time.Time
 }
 
 func NewJobDistributor(
 	jobs store.JobRepository,
 	workers store.WorkerRepository,
+	deployments store.DeploymentRepository,
 	cfg config.ControlPlaneConfig,
 ) *JobDistributor {
 	var controlPlaneWorkerID string
@@ -35,10 +45,15 @@ func NewJobDistributor(
 	return &JobDistributor{
 		jobs:                jobs,
 		workers:             workers,
+		deployments:         deployments,
 		enabled:             cfg.EnableMultiWorker,
 		controlPlaneWorker:  controlPlaneWorkerID,
 		placementStrategy:   cfg.JobPlacementStrategy,
 		maxJobsControlPlane: cfg.ControlPlaneMaxJobs,
+		heartbeatTimeout:    cfg.WorkerHeartbeatTimeout,
+		rebalanceCooldown:   10 * time.Minute,
+		rebalanceMinDelta:   200,
+		lastShiftByDeploy:   make(map[string]time.Time),
 	}
 }
 
@@ -63,6 +78,9 @@ func (d *JobDistributor) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			d.reconcileWorkerHealth(ctx)
+			d.reconcileOfflineDeployments(ctx)
+			d.reconcileRebalance(ctx)
 			d.distributeJobs(ctx)
 		}
 	}
@@ -77,8 +95,8 @@ func (d *JobDistributor) registerControlPlaneAsWorker(ctx context.Context) {
 		Status:      string(domain.WorkerStatusIdle),
 		Capabilities: domain.WorkerCapabilities{
 			Runtime:           "kubernetes",
-			CPUCores:          4,  // Advertise sufficient capacity for local deployments
-			MemoryGB:          8,  // Adjust based on your machine's capacity
+			CPUCores:          4, // Advertise sufficient capacity for local deployments
+			MemoryGB:          8, // Adjust based on your machine's capacity
 			MaxConcurrentJobs: d.maxJobsControlPlane,
 			SupportedPackages: []string{"small", "medium", "large"},
 		},
@@ -183,17 +201,270 @@ func (d *JobDistributor) remoteOnlyPlacement(ctx context.Context) (domain.Worker
 }
 
 func (d *JobDistributor) getRemoteWorker(ctx context.Context) (domain.Worker, error) {
-	workers, err := d.workers.ListByStatus(ctx, domain.WorkerStatusIdle)
+	workers, err := d.workers.List(ctx)
 	if err != nil {
 		return domain.Worker{}, err
 	}
 
-	// Exclude control-plane worker
+	candidates := make([]domain.Worker, 0, len(workers))
 	for _, w := range workers {
-		if w.WorkerID != d.controlPlaneWorker && w.CurrentJobs < w.MaxConcurrentJobs {
-			return w, nil
+		if w.WorkerID == d.controlPlaneWorker {
+			continue
+		}
+		if w.Status == string(domain.WorkerStatusOffline) {
+			continue
+		}
+		if w.CurrentJobs >= w.MaxConcurrentJobs {
+			continue
+		}
+		candidates = append(candidates, w)
+	}
+
+	if len(candidates) == 0 {
+		return domain.Worker{}, store.ErrNoAvailableWorkers
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		freeSlotsI := candidates[i].MaxConcurrentJobs - candidates[i].CurrentJobs
+		freeSlotsJ := candidates[j].MaxConcurrentJobs - candidates[j].CurrentJobs
+		if freeSlotsI != freeSlotsJ {
+			return freeSlotsI > freeSlotsJ
+		}
+		if candidates[i].Capabilities.CPUCores != candidates[j].Capabilities.CPUCores {
+			return candidates[i].Capabilities.CPUCores > candidates[j].Capabilities.CPUCores
+		}
+		if candidates[i].Capabilities.MemoryGB != candidates[j].Capabilities.MemoryGB {
+			return candidates[i].Capabilities.MemoryGB > candidates[j].Capabilities.MemoryGB
+		}
+		return candidates[i].WorkerID < candidates[j].WorkerID
+	})
+
+	return candidates[0], nil
+}
+
+func (d *JobDistributor) reconcileWorkerHealth(ctx context.Context) {
+	workers, err := d.workers.List(ctx)
+	if err != nil {
+		logs.Errorf("distributor", "worker health reconciliation failed err=%v", err)
+		return
+	}
+
+	now := time.Now()
+	for _, w := range workers {
+		if w.WorkerID == d.controlPlaneWorker {
+			continue
+		}
+		if w.Status == string(domain.WorkerStatusOffline) {
+			continue
+		}
+		if w.LastHeartbeat == nil {
+			continue
+		}
+		if now.Sub(*w.LastHeartbeat) <= d.heartbeatTimeout {
+			continue
+		}
+
+		if err := d.workers.MarkOffline(ctx, w.WorkerID); err != nil {
+			logs.Errorf("distributor", "failed to mark worker offline worker_id=%s err=%v", w.WorkerID, err)
+			continue
+		}
+		logs.Infof("distributor", "worker marked offline worker_id=%s heartbeat_age=%s", w.WorkerID, now.Sub(*w.LastHeartbeat))
+	}
+}
+
+func (d *JobDistributor) reconcileOfflineDeployments(ctx context.Context) {
+	if d.deployments == nil {
+		return
+	}
+
+	workers, err := d.workers.List(ctx)
+	if err != nil {
+		logs.Errorf("distributor", "failed to list workers for failover err=%v", err)
+		return
+	}
+
+	offline := make(map[string]struct{}, len(workers))
+	for _, w := range workers {
+		if w.Status == string(domain.WorkerStatusOffline) {
+			offline[w.WorkerID] = struct{}{}
+		}
+	}
+	if len(offline) == 0 {
+		return
+	}
+
+	for _, dep := range d.deployments.List() {
+		if dep.Status != "running" {
+			continue
+		}
+		owner := strings.TrimSpace(dep.OwnerWorkerID)
+		if owner == "" {
+			continue
+		}
+		if _, isOffline := offline[owner]; !isOffline {
+			continue
+		}
+
+		jobID, err := d.requeueDeployment(ctx, dep, "owner worker went offline, deployment re-queued for failover")
+		if err != nil {
+			logs.Errorf("distributor", "failed to enqueue failover job deployment_id=%s err=%v", dep.DeploymentID, err)
+			continue
+		}
+
+		logs.Infof("distributor", "re-queued deployment due to offline worker deployment_id=%s old_worker_id=%s job_id=%s",
+			dep.DeploymentID, owner, jobID)
+	}
+}
+
+func (d *JobDistributor) reconcileRebalance(ctx context.Context) {
+	if d.deployments == nil {
+		return
+	}
+
+	workers, err := d.workers.List(ctx)
+	if err != nil {
+		logs.Errorf("distributor", "failed to list workers for rebalance err=%v", err)
+		return
+	}
+
+	workerByID := make(map[string]domain.Worker, len(workers))
+	for _, w := range workers {
+		workerByID[w.WorkerID] = w
+	}
+
+	now := time.Now().UTC()
+	for _, dep := range d.deployments.List() {
+		if dep.Status != "running" {
+			continue
+		}
+
+		ownerID := strings.TrimSpace(dep.OwnerWorkerID)
+		if ownerID == "" {
+			continue
+		}
+
+		if last, ok := d.lastShiftByDeploy[dep.DeploymentID]; ok {
+			if now.Sub(last) < d.rebalanceCooldown {
+				continue
+			}
+		}
+
+		owner, ok := workerByID[ownerID]
+		if !ok {
+			continue
+		}
+
+		ownerScore, ownerEligible := workerPlacementScore(owner)
+		if !ownerEligible {
+			continue
+		}
+
+		bestWorker, bestScore, found := d.bestAvailableWorker(workers)
+		if !found {
+			continue
+		}
+		if bestWorker.WorkerID == ownerID {
+			continue
+		}
+
+		if bestScore-ownerScore < d.rebalanceMinDelta {
+			continue
+		}
+
+		reason := "better worker available online, deployment re-queued for rebalance"
+		jobID, err := d.requeueDeployment(ctx, dep, reason)
+		if err != nil {
+			logs.Errorf("distributor", "failed to enqueue rebalance job deployment_id=%s err=%v", dep.DeploymentID, err)
+			continue
+		}
+
+		logs.Infof("distributor", "rebalanced deployment deployment_id=%s from_worker=%s to_worker=%s old_score=%d new_score=%d job_id=%s",
+			dep.DeploymentID, ownerID, bestWorker.WorkerID, ownerScore, bestScore, jobID)
+	}
+}
+
+func (d *JobDistributor) bestAvailableWorker(workers []domain.Worker) (domain.Worker, int, bool) {
+	bestScore := -1
+	var bestWorker domain.Worker
+
+	for _, w := range workers {
+		score, ok := workerPlacementScore(w)
+		if !ok {
+			continue
+		}
+		if score > bestScore {
+			bestScore = score
+			bestWorker = w
 		}
 	}
 
-	return domain.Worker{}, store.ErrNoAvailableWorkers
+	if bestScore < 0 {
+		return domain.Worker{}, 0, false
+	}
+
+	return bestWorker, bestScore, true
+}
+
+func workerPlacementScore(w domain.Worker) (int, bool) {
+	if w.Status == string(domain.WorkerStatusOffline) {
+		return 0, false
+	}
+	if w.MaxConcurrentJobs <= 0 {
+		return 0, false
+	}
+
+	freeSlots := w.MaxConcurrentJobs - w.CurrentJobs
+	if freeSlots <= 0 {
+		return 0, false
+	}
+
+	score := freeSlots*1000 + w.Capabilities.CPUCores*100 + w.Capabilities.MemoryGB*10
+	return score, true
+}
+
+func (d *JobDistributor) requeueDeployment(ctx context.Context, dep domain.DeploymentRecord, reason string) (string, error) {
+	now := time.Now().UTC()
+	oldOwner := strings.TrimSpace(dep.OwnerWorkerID)
+
+	dep.Status = "queued"
+	dep.OwnerWorkerID = ""
+	dep.Error = reason
+	dep.BuildLogs = dep.BuildLogs + "\n=== rebalance/failover ===\n" + reason + "\n"
+	dep.FinishedAt = nil
+	d.deployments.Update(dep)
+
+	job := domain.DeploymentJob{
+		JobID:        strings.ReplaceAll(uuid.NewString(), "-", "")[:12],
+		DeploymentID: dep.DeploymentID,
+		Repo:         dep.Repo,
+		Subdomain:    dep.Subdomain,
+		Port:         dep.Port,
+		ScalingMode:  dep.ScalingMode,
+		MinReplicas:  dep.MinReplicas,
+		MaxReplicas:  dep.MaxReplicas,
+		CPUTarget:    dep.CPUTarget,
+		CPURequest:   dep.CPURequest,
+		CPULimit:     dep.CPULimit,
+		NodeSelector: domain.CloneStringMap(dep.NodeSelector),
+		Env:          domain.CloneStringMap(dep.Env),
+		BuildArgs:    domain.CloneStringMap(dep.BuildArgs),
+		CPUCores:     dep.CPUCores,
+		MemoryMB:     dep.MemoryMB,
+		RequestedBy:  dep.RequestedBy,
+		QueuedAt:     now,
+	}
+
+	if err := d.jobs.Enqueue(ctx, job); err != nil {
+		return "", err
+	}
+
+	if d.lastShiftByDeploy == nil {
+		d.lastShiftByDeploy = make(map[string]time.Time)
+	}
+	d.lastShiftByDeploy[dep.DeploymentID] = now
+	if oldOwner != "" {
+		logs.Debugf("distributor", "deployment shift recorded deployment_id=%s previous_owner=%s", dep.DeploymentID, oldOwner)
+	}
+
+	return job.JobID, nil
 }

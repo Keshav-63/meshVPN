@@ -59,6 +59,8 @@ Quick cleanup:
 
 - **[Deployment Analytics API](docs/DEPLOYMENT-ANALYTICS-API.md)** - Analytics endpoints documentation
 - **[Multi-Worker Architecture](docs/MULTI-WORKER-ARCHITECTURE.md)** - Distributed worker setup
+- **[Dynamic Placement and Failover Architecture](docs/DYNAMIC-PLACEMENT-FAILOVER-ARCHITECTURE.md)** - End-to-end target architecture, implementation plan, and dry-run matrix
+- **[E2E Swagger + Grafana Validation](docs/E2E-SWAGGER-GRAFANA-VALIDATION.md)** - Full end-to-end test runbook for API, metrics, and dashboards
 - **[Multi-Worker Setup](docs/MULTI-WORKER-SETUP.md)** - Worker deployment guide
 
 ### For Operators

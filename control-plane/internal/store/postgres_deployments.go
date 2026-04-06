@@ -22,6 +22,7 @@ func (r *PostgresDeploymentRepository) EnsureSchema() error {
 	const schema = `
 CREATE TABLE IF NOT EXISTS deployments (
     deployment_id TEXT PRIMARY KEY,
+	owner_worker_id TEXT,
     repo TEXT NOT NULL,
     subdomain TEXT NOT NULL,
     port INTEGER NOT NULL,
@@ -57,7 +58,7 @@ func (r *PostgresDeploymentRepository) Update(rec domain.DeploymentRecord) {
 
 func (r *PostgresDeploymentRepository) Get(id string) (domain.DeploymentRecord, error) {
 	const query = `
-SELECT deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, owner_worker_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 WHERE deployment_id = $1
 `
@@ -72,11 +73,13 @@ WHERE deployment_id = $1
 	var errText sql.NullString
 	var buildLogs sql.NullString
 	var finishedAt sql.NullTime
+	var ownerWorkerID sql.NullString
 	var userID sql.NullString
 	var pkg sql.NullString
 
 	err := r.db.QueryRow(query, id).Scan(
 		&rec.DeploymentID,
+		&ownerWorkerID,
 		&rec.RequestedBy,
 		&userID,
 		&pkg,
@@ -113,6 +116,9 @@ WHERE deployment_id = $1
 	if userID.Valid {
 		rec.UserID = userID.String
 	}
+	if ownerWorkerID.Valid {
+		rec.OwnerWorkerID = ownerWorkerID.String
+	}
 	if pkg.Valid {
 		rec.Package = pkg.String
 	}
@@ -145,7 +151,7 @@ WHERE deployment_id = $1
 
 func (r *PostgresDeploymentRepository) List() []domain.DeploymentRecord {
 	const query = `
-SELECT deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, owner_worker_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 ORDER BY started_at DESC
 `
@@ -168,11 +174,13 @@ ORDER BY started_at DESC
 		var errText sql.NullString
 		var buildLogs sql.NullString
 		var finishedAt sql.NullTime
+		var ownerWorkerID sql.NullString
 		var userID sql.NullString
 		var pkg sql.NullString
 
 		err := rows.Scan(
 			&rec.DeploymentID,
+			&ownerWorkerID,
 			&rec.RequestedBy,
 			&userID,
 			&pkg,
@@ -205,6 +213,9 @@ ORDER BY started_at DESC
 
 		if userID.Valid {
 			rec.UserID = userID.String
+		}
+		if ownerWorkerID.Valid {
+			rec.OwnerWorkerID = ownerWorkerID.String
 		}
 		if pkg.Valid {
 			rec.Package = pkg.String
@@ -242,7 +253,7 @@ ORDER BY started_at DESC
 // ListByUserID returns all deployments for a specific user
 func (r *PostgresDeploymentRepository) ListByUserID(userID string) []domain.DeploymentRecord {
 	const query = `
-SELECT deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+SELECT deployment_id, owner_worker_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 FROM deployments
 WHERE user_id = $1
 ORDER BY started_at DESC
@@ -267,11 +278,13 @@ ORDER BY started_at DESC
 		var errText sql.NullString
 		var buildLogs sql.NullString
 		var finishedAt sql.NullTime
+		var ownerWorkerID sql.NullString
 		var uid sql.NullString
 		var pkg sql.NullString
 
 		err := rows.Scan(
 			&rec.DeploymentID,
+			&ownerWorkerID,
 			&rec.RequestedBy,
 			&uid,
 			&pkg,
@@ -304,6 +317,9 @@ ORDER BY started_at DESC
 
 		if uid.Valid {
 			rec.UserID = uid.String
+		}
+		if ownerWorkerID.Valid {
+			rec.OwnerWorkerID = ownerWorkerID.String
 		}
 		if pkg.Valid {
 			rec.Package = pkg.String
@@ -342,13 +358,14 @@ ORDER BY started_at DESC
 func (r *PostgresDeploymentRepository) upsert(rec domain.DeploymentRecord) error {
 	const stmt = `
 INSERT INTO deployments (
-	deployment_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
+	deployment_id, owner_worker_id, requested_by, user_id, package, repo, subdomain, port, scaling_mode, min_replicas, max_replicas, cpu_target_utilization, cpu_request_milli, cpu_limit_milli, node_selector, cpu_cores, memory_mb, container, image, url, status, error, build_logs, env, build_args, started_at, finished_at
 )
 VALUES (
-	$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NULLIF($8, ''), $9, $10, $11, $12, $13, $14::jsonb, $15, $16, NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''), $20, NULLIF($21, ''), NULLIF($22, ''), $23::jsonb, $24::jsonb, $25, $26
+	$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, NULLIF($9, ''), $10, $11, $12, $13, $14, $15::jsonb, $16, $17, NULLIF($18, ''), NULLIF($19, ''), NULLIF($20, ''), $21, NULLIF($22, ''), NULLIF($23, ''), $24::jsonb, $25::jsonb, $26, $27
 )
 ON CONFLICT (deployment_id)
 DO UPDATE SET
+	owner_worker_id = EXCLUDED.owner_worker_id,
 	requested_by = EXCLUDED.requested_by,
 	user_id = EXCLUDED.user_id,
 	package = EXCLUDED.package,
@@ -383,6 +400,7 @@ DO UPDATE SET
 	_, err := r.db.Exec(
 		stmt,
 		rec.DeploymentID,
+		rec.OwnerWorkerID,
 		rec.RequestedBy,
 		rec.UserID,
 		rec.Package,
