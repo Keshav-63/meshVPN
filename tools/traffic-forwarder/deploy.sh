@@ -1,6 +1,15 @@
 #!/bin/bash
 set -e
 
+# Load root .env so telemetry/config values are honored without manual export.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  set -a
+  source "$PROJECT_ROOT/.env"
+  set +a
+fi
+
 echo "🚀 Setting up Traffic Tracking for MeshVPN"
 echo ""
 
@@ -100,9 +109,15 @@ else
     fi
 fi
 
-# Use host.docker.internal:8081 (proxy port) for k3d → WSL communication
-CONTROL_PLANE_URL="http://host.docker.internal:8081"
+# Use env override when provided; otherwise default to bridge proxy for k3d → WSL communication.
+CONTROL_PLANE_URL=${CONTROL_PLANE_URL:-http://host.docker.internal:8081}
+APP_BASE_DOMAIN=${APP_BASE_DOMAIN:-keshavstack.tech}
+TELEMETRY_BATCH_SIZE=${TELEMETRY_BATCH_SIZE:-100}
+TELEMETRY_QUEUE_SIZE=${TELEMETRY_QUEUE_SIZE:-50000}
+TELEMETRY_FLUSH_INTERVAL=${TELEMETRY_FLUSH_INTERVAL:-500ms}
+TELEMETRY_HTTP_TIMEOUT=${TELEMETRY_HTTP_TIMEOUT:-10s}
 echo "✅ Using bridge proxy: $CONTROL_PLANE_URL"
+echo "✅ Telemetry settings: batch_size=$TELEMETRY_BATCH_SIZE queue_size=$TELEMETRY_QUEUE_SIZE flush_interval=$TELEMETRY_FLUSH_INTERVAL http_timeout=$TELEMETRY_HTTP_TIMEOUT"
 
 # Step 5: Deploy the forwarder
 echo ""
@@ -164,6 +179,16 @@ spec:
           value: "$CONTROL_PLANE_URL"
         - name: TRAEFIK_NAMESPACE
           value: "$TRAEFIK_NAMESPACE"
+        - name: APP_BASE_DOMAIN
+          value: "$APP_BASE_DOMAIN"
+        - name: TELEMETRY_BATCH_SIZE
+          value: "$TELEMETRY_BATCH_SIZE"
+        - name: TELEMETRY_QUEUE_SIZE
+          value: "$TELEMETRY_QUEUE_SIZE"
+        - name: TELEMETRY_FLUSH_INTERVAL
+          value: "$TELEMETRY_FLUSH_INTERVAL"
+        - name: TELEMETRY_HTTP_TIMEOUT
+          value: "$TELEMETRY_HTTP_TIMEOUT"
 EOF
 
 kubectl apply -f /tmp/traffic-forwarder-deploy.yaml
@@ -176,7 +201,14 @@ echo "✅ Traffic forwarder deployed"
 # Step 6: Wait for pod to be ready
 echo ""
 echo "Step 6: Waiting for traffic forwarder to start..."
-kubectl wait --for=condition=ready pod -l app=traffic-forwarder --timeout=60s
+
+# Wait on deployment rollout instead of label-based pod wait.
+# Label waits can race with terminating old ReplicaSet pods and return NotFound.
+kubectl rollout status deployment/traffic-forwarder -n default --timeout=120s
+
+# Show current pod state for visibility, but do not fail after successful rollout.
+echo "Current forwarder pods:"
+kubectl get pods -n default -l app=traffic-forwarder -o wide || true
 
 echo ""
 echo "✅ Traffic tracking is now active!"

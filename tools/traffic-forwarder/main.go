@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,9 +21,11 @@ import (
 type TraefikAccessLog struct {
 	ClientHost         string `json:"ClientHost"`
 	RequestHost        string `json:"RequestHost"`
+	RequestAddr        string `json:"RequestAddr"`
 	RequestMethod      string `json:"RequestMethod"`
 	RequestPath        string `json:"RequestPath"`
 	OriginStatus       int    `json:"OriginStatus"`
+	DownstreamStatus   int    `json:"DownstreamStatus"`
 	Duration           int64  `json:"Duration"` // Microseconds
 	OriginContentSize  int64  `json:"OriginContentSize"`
 	RequestContentSize int64  `json:"RequestContentSize"`
@@ -38,6 +43,175 @@ type TelemetryPayload struct {
 	Timestamp     string  `json:"timestamp"`
 }
 
+type BatchTelemetryPayload struct {
+	Requests []TelemetryPayload `json:"requests"`
+}
+
+type TelemetrySender struct {
+	batchEndpoint string
+	client        *http.Client
+	queue         chan TelemetryPayload
+	batchSize     int
+	flushInterval time.Duration
+
+	dropped uint64
+	sent    uint64
+	failed  uint64
+}
+
+func NewTelemetrySender(baseURL string) *TelemetrySender {
+	batchSize := envInt("TELEMETRY_BATCH_SIZE", 200)
+	if batchSize < 1 {
+		batchSize = 1
+	}
+
+	queueSize := envInt("TELEMETRY_QUEUE_SIZE", 20000)
+	if queueSize < batchSize {
+		queueSize = batchSize * 2
+	}
+
+	flushInterval := envDuration("TELEMETRY_FLUSH_INTERVAL", time.Second)
+	if flushInterval < 100*time.Millisecond {
+		flushInterval = 100 * time.Millisecond
+	}
+
+	httpTimeout := envDuration("TELEMETRY_HTTP_TIMEOUT", 3*time.Second)
+	if httpTimeout < 500*time.Millisecond {
+		httpTimeout = 500 * time.Millisecond
+	}
+
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	return &TelemetrySender{
+		batchEndpoint: strings.TrimRight(baseURL, "/") + "/api/telemetry/deployment-request/batch",
+		client: &http.Client{
+			Timeout:   httpTimeout,
+			Transport: transport,
+		},
+		queue:         make(chan TelemetryPayload, queueSize),
+		batchSize:     batchSize,
+		flushInterval: flushInterval,
+	}
+}
+
+func (s *TelemetrySender) Enqueue(payload TelemetryPayload) {
+	select {
+	case s.queue <- payload:
+	default:
+		atomic.AddUint64(&s.dropped, 1)
+	}
+}
+
+func (s *TelemetrySender) Run() {
+	ticker := time.NewTicker(s.flushInterval)
+	statsTicker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	defer statsTicker.Stop()
+
+	batch := make([]TelemetryPayload, 0, s.batchSize)
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+
+		if err := s.postBatch(batch); err != nil {
+			// Single quick retry to reduce drop probability during transient network blips.
+			time.Sleep(200 * time.Millisecond)
+			if retryErr := s.postBatch(batch); retryErr != nil {
+				atomic.AddUint64(&s.failed, uint64(len(batch)))
+				log.Printf("Telemetry batch send failed size=%d err=%v", len(batch), retryErr)
+				batch = batch[:0]
+				return
+			}
+		}
+
+		atomic.AddUint64(&s.sent, uint64(len(batch)))
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case payload := <-s.queue:
+			batch = append(batch, payload)
+			if len(batch) >= s.batchSize {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case <-statsTicker.C:
+			log.Printf(
+				"Telemetry sender stats queue=%d sent=%d failed=%d dropped=%d batch_size=%d flush_interval=%s",
+				len(s.queue),
+				atomic.LoadUint64(&s.sent),
+				atomic.LoadUint64(&s.failed),
+				atomic.LoadUint64(&s.dropped),
+				s.batchSize,
+				s.flushInterval,
+			)
+		}
+	}
+}
+
+func (s *TelemetrySender) postBatch(requests []TelemetryPayload) error {
+	payload := BatchTelemetryPayload{Requests: requests}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal batch payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, s.batchEndpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("post batch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("batch endpoint returned %d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	return nil
+}
+
+func envInt(name string, defaultValue int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+
+	return parsed
+}
+
+func envDuration(name string, defaultValue time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return defaultValue
+	}
+
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return defaultValue
+	}
+
+	return parsed
+}
+
 func main() {
 	controlPlaneURL := os.Getenv("CONTROL_PLANE_URL")
 	if controlPlaneURL == "" {
@@ -50,10 +224,26 @@ func main() {
 	}
 
 	configuredTraefikPod := os.Getenv("TRAEFIK_POD")
+	appBaseDomain := strings.TrimSpace(strings.ToLower(os.Getenv("APP_BASE_DOMAIN")))
+	if appBaseDomain == "" {
+		appBaseDomain = "keshavstack.tech"
+	}
 
 	log.Printf("Starting traffic forwarder...")
 	log.Printf("Control Plane: %s", controlPlaneURL)
 	log.Printf("Traefik Namespace: %s", traefikNamespace)
+	log.Printf("App Base Domain: %s", appBaseDomain)
+
+	sender := NewTelemetrySender(controlPlaneURL)
+	go sender.Run()
+
+	log.Printf(
+		"Telemetry sender configured batch_size=%d queue_size=%d flush_interval=%s endpoint=%s",
+		sender.batchSize,
+		cap(sender.queue),
+		sender.flushInterval,
+		sender.batchEndpoint,
+	)
 
 	for {
 		traefikPod, containerName, err := resolveTraefikTarget(traefikNamespace, configuredTraefikPod)
@@ -64,7 +254,7 @@ func main() {
 		}
 
 		log.Printf("Tailing Traefik access logs from pod=%s container=%s", traefikPod, containerName)
-		if err := streamTraefikLogs(traefikNamespace, traefikPod, containerName, controlPlaneURL); err != nil {
+		if err := streamTraefikLogs(traefikNamespace, traefikPod, containerName, sender, appBaseDomain); err != nil {
 			log.Printf("Log stream ended: %v", err)
 		} else {
 			log.Printf("Log stream ended without error, reconnecting")
@@ -74,7 +264,7 @@ func main() {
 	}
 }
 
-func streamTraefikLogs(namespace, pod, containerName, controlPlaneURL string) error {
+func streamTraefikLogs(namespace, pod, containerName string, sender *TelemetrySender, appBaseDomain string) error {
 	args := []string{"logs", "-n", namespace, "-f", pod, "--tail=20"}
 	if containerName != "" {
 		args = append(args, "-c", containerName)
@@ -115,7 +305,7 @@ func streamTraefikLogs(namespace, pod, containerName, controlPlaneURL string) er
 		if line == "" {
 			continue
 		}
-		processLogLine(line, controlPlaneURL)
+		processLogLine(line, sender, appBaseDomain)
 	}
 
 	if scanErr := outScanner.Err(); scanErr != nil && scanErr != io.EOF {
@@ -210,7 +400,7 @@ func resolveTraefikContainer(namespace, pod string) (string, error) {
 	return containers[0], nil
 }
 
-func processLogLine(line string, controlPlaneURL string) {
+func processLogLine(line string, sender *TelemetrySender, appBaseDomain string) {
 	// Parse JSON log
 	var accessLog TraefikAccessLog
 	if err := json.Unmarshal([]byte(line), &accessLog); err != nil {
@@ -218,17 +408,24 @@ func processLogLine(line string, controlPlaneURL string) {
 		return
 	}
 
-	// Extract deployment ID from RequestHost
-	// Example: myapp.keshavstack.tech -> myapp
-	subdomain := extractSubdomain(accessLog.RequestHost)
+	statusCode := accessLog.OriginStatus
+	if statusCode <= 0 {
+		statusCode = accessLog.DownstreamStatus
+	}
+	if statusCode < 100 || statusCode > 599 {
+		return
+	}
+
+	host := normalizeHost(accessLog.RequestHost, accessLog.RequestAddr)
+	subdomain := extractSubdomain(host, appBaseDomain)
 	if subdomain == "" {
 		return // Not a user deployment
 	}
 
 	// Convert to telemetry payload
 	payload := TelemetryPayload{
-		DeploymentID:  subdomain, // We'll need to map subdomain -> deployment_id
-		StatusCode:    accessLog.OriginStatus,
+		DeploymentID:  subdomain,
+		StatusCode:    statusCode,
 		LatencyMs:     float64(accessLog.Duration) / 1000.0, // Convert microseconds to milliseconds
 		BytesSent:     accessLog.OriginContentSize,
 		BytesReceived: accessLog.RequestContentSize,
@@ -236,46 +433,73 @@ func processLogLine(line string, controlPlaneURL string) {
 		Timestamp:     accessLog.Time,
 	}
 
-	// Send to telemetry endpoint
-	if err := sendTelemetry(controlPlaneURL, payload); err != nil {
-		log.Printf("Failed to send telemetry: %v", err)
-	}
+	// Queue telemetry for async batch forwarding.
+	sender.Enqueue(payload)
 }
 
-func extractSubdomain(host string) string {
-	// Extract subdomain from host like: myapp.keshavstack.tech -> myapp
-	parts := strings.Split(host, ".")
-	if len(parts) < 3 {
+func normalizeHost(requestHost, requestAddr string) string {
+	host := strings.TrimSpace(requestHost)
+	if host == "" || host == "-" {
+		host = strings.TrimSpace(requestAddr)
+	}
+
+	host = strings.ToLower(strings.TrimSpace(stripPort(host)))
+	return host
+}
+
+func stripPort(host string) string {
+	if host == "" {
 		return ""
 	}
 
-	subdomain := parts[0]
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		return parsedHost
+	}
 
-	// Skip non-deployment hosts
-	if subdomain == "www" || subdomain == "api" || subdomain == "control-plane" {
+	if strings.HasPrefix(host, "[") {
+		if end := strings.Index(host, "]"); end > 1 {
+			return host[1:end]
+		}
+	}
+
+	if strings.Count(host, ":") == 1 {
+		parts := strings.SplitN(host, ":", 2)
+		if parts[0] != "" {
+			return parts[0]
+		}
+	}
+
+	return host
+}
+
+func extractSubdomain(host, appBaseDomain string) string {
+	if host == "" || appBaseDomain == "" {
+		return ""
+	}
+
+	if net.ParseIP(host) != nil {
+		return ""
+	}
+
+	base := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(appBaseDomain)), ".")
+	if base == "" {
+		return ""
+	}
+
+	suffix := "." + base
+	if !strings.HasSuffix(host, suffix) {
+		return ""
+	}
+
+	subdomain := strings.TrimSuffix(host, suffix)
+	if subdomain == "" || strings.Contains(subdomain, ".") {
+		return ""
+	}
+
+	// Skip reserved hosts that are not user deployments.
+	if subdomain == "www" || subdomain == "api" || subdomain == "control-plane" || subdomain == "self" {
 		return ""
 	}
 
 	return subdomain
-}
-
-func sendTelemetry(baseURL string, payload TelemetryPayload) error {
-	endpoint := baseURL + "/api/telemetry/deployment-request"
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer(data))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telemetry endpoint returned status %d", resp.StatusCode)
-	}
-
-	return nil
 }

@@ -44,6 +44,12 @@ export TRAEFIK_NAMESPACE=kube-system
 # Traefik pod name (auto-detected if not set)
 export TRAEFIK_POD=traefik-abc123-xyz
 
+# Telemetry batching (recommended defaults)
+export TELEMETRY_BATCH_SIZE=100
+export TELEMETRY_QUEUE_SIZE=50000
+export TELEMETRY_FLUSH_INTERVAL=500ms
+export TELEMETRY_HTTP_TIMEOUT=10s
+
 # Run
 ./traffic-forwarder
 ```
@@ -55,7 +61,13 @@ export TRAEFIK_POD=traefik-abc123-xyz
 1. **Tails Traefik Logs** - Uses `kubectl logs -f` to stream Traefik access logs
 2. **Parses JSON** - Extracts request details (status, latency, bytes)
 3. **Extracts Deployment ID** - Gets subdomain from host header
-4. **Forwards to Control Plane** - POSTs to `/api/telemetry/deployment-request`
+4. **Queues and Batches Telemetry** - Buffers requests in memory and flushes to `/api/telemetry/deployment-request/batch`
+
+## Performance Notes
+
+- Forwarding is asynchronous to avoid blocking log ingestion under high traffic.
+- The queue is bounded. If it fills up during extreme spikes, telemetry events may be dropped to protect system stability.
+- Every 30 seconds the forwarder logs sender stats (`queue`, `sent`, `failed`, `dropped`).
 
 ## Deployment ID Mapping
 

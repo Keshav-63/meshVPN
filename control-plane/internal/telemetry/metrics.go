@@ -50,7 +50,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "deployment_request_latency_seconds",
 			Help:    "HTTP request latency per deployment in seconds.",
-			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 15, 20, 30},
 		},
 		[]string{"deployment_id"},
 	)
@@ -216,13 +216,16 @@ func ObserveWorkerJob(status string, startedAt time.Time) {
 // ObserveDeploymentRequest records a single HTTP request to a deployment
 func ObserveDeploymentRequest(deploymentID string, statusCode int, latencySeconds float64, bytesSent, bytesReceived int64) {
 	DeploymentRequestsTotal.WithLabelValues(deploymentID, fmt.Sprintf("%d", statusCode)).Inc()
+	PlatformRequestsTotal.Inc()
 	DeploymentRequestLatency.WithLabelValues(deploymentID).Observe(latencySeconds)
 
 	if bytesSent > 0 {
 		DeploymentBandwidth.WithLabelValues(deploymentID, "sent").Add(float64(bytesSent))
+		PlatformBandwidthTotal.WithLabelValues("sent").Add(float64(bytesSent))
 	}
 	if bytesReceived > 0 {
 		DeploymentBandwidth.WithLabelValues(deploymentID, "received").Add(float64(bytesReceived))
+		PlatformBandwidthTotal.WithLabelValues("received").Add(float64(bytesReceived))
 	}
 }
 

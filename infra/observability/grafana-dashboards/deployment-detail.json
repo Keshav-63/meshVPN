@@ -104,7 +104,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\"}[5m])) by (deployment_id)",
+          "expr": "sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\"}[$__rate_interval])) by (deployment_id)",
           "legendFormat": "{{deployment_id}}",
           "refId": "A"
         }
@@ -202,7 +202,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(deployment_request_latency_seconds_bucket{deployment_id=~\"$deployment_id\"}[5m])) by (le, deployment_id))",
+          "expr": "histogram_quantile(0.50, sum(rate(deployment_request_latency_seconds_bucket{deployment_id=~\"$deployment_id\"}[$__rate_interval])) by (le, deployment_id))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -211,7 +211,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.90, sum(rate(deployment_request_latency_seconds_bucket{deployment_id=~\"$deployment_id\"}[5m])) by (le, deployment_id))",
+          "expr": "histogram_quantile(0.90, sum(rate(deployment_request_latency_seconds_bucket{deployment_id=~\"$deployment_id\"}[$__rate_interval])) by (le, deployment_id))",
           "legendFormat": "p90",
           "refId": "B"
         },
@@ -220,7 +220,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(deployment_request_latency_seconds_bucket{deployment_id=~\"$deployment_id\"}[5m])) by (le, deployment_id))",
+          "expr": "histogram_quantile(0.99, sum(rate(deployment_request_latency_seconds_bucket{deployment_id=~\"$deployment_id\"}[$__rate_interval])) by (le, deployment_id))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -289,7 +289,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\"}[5m])) by (status_code)",
+          "expr": "sum(increase(deployment_requests_total{deployment_id=~\"$deployment_id\"}[$__range])) by (status_code)",
           "legendFormat": "{{status_code}}",
           "refId": "A"
         }
@@ -379,7 +379,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\",status_code=~\"5..\"}[5m])) / sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\"}[5m])) * 100",
+          "expr": "100 * ((sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\",status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / clamp_min(sum(rate(deployment_requests_total{deployment_id=~\"$deployment_id\"}[$__rate_interval])), 0.000001))",
           "legendFormat": "Error Rate (%)",
           "refId": "A"
         }

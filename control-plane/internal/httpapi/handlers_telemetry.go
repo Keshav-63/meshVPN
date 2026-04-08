@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -16,13 +18,31 @@ import (
 type TelemetryHandler struct {
 	analyticsRepo     AnalyticsRepository
 	deploymentService *service.DeploymentService
+	cacheMu           sync.RWMutex
+	resolveCache      map[string]resolvedDeploymentCacheEntry
 }
+
+type telemetryBatchRecorder interface {
+	RecordRequestBatch(requests []domain.DeploymentRequest) error
+}
+
+type resolvedDeploymentCacheEntry struct {
+	deploymentID string
+	expiresAt    time.Time
+}
+
+const (
+	telemetryResolveCacheTTL        = 2 * time.Minute
+	telemetryResolveNegativeTTL     = 20 * time.Second
+	telemetryResolveMaxCacheEntries = 10000
+)
 
 // NewTelemetryHandler creates a new telemetry handler
 func NewTelemetryHandler(analyticsRepo AnalyticsRepository, deploymentService *service.DeploymentService) *TelemetryHandler {
 	return &TelemetryHandler{
 		analyticsRepo:     analyticsRepo,
 		deploymentService: deploymentService,
+		resolveCache:      make(map[string]resolvedDeploymentCacheEntry),
 	}
 }
 
@@ -64,10 +84,17 @@ func (h *TelemetryHandler) RecordDeploymentRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "deployment_id is required"})
 		return
 	}
+	if payload.StatusCode < 100 || payload.StatusCode > 599 {
+		logs.Warnf("telemetry", "dropping telemetry with invalid status_code=%d deployment_id=%s", payload.StatusCode, payload.DeploymentID)
+		c.JSON(http.StatusAccepted, gin.H{"status": "dropped", "reason": "invalid_status_code"})
+		return
+	}
 
-	deploymentID := payload.DeploymentID
-	if h.deploymentService != nil {
-		deploymentID = h.deploymentService.ResolveDeploymentID(payload.DeploymentID)
+	deploymentID, ok := h.resolveTelemetryDeploymentID(payload.DeploymentID)
+	if !ok {
+		logs.Warnf("telemetry", "dropping telemetry with unresolved deployment identifier=%s", payload.DeploymentID)
+		c.JSON(http.StatusAccepted, gin.H{"status": "dropped", "reason": "unknown_deployment"})
+		return
 	}
 
 	// Parse timestamp or use current time
@@ -142,8 +169,23 @@ func (h *TelemetryHandler) RecordDeploymentRequestBatch(c *gin.Context) {
 
 	recorded := 0
 	failed := 0
+	dropped := 0
+
+	resolvedInBatch := make(map[string]string)
+	unresolvedInBatch := make(map[string]struct{})
+	dbRequests := make([]domain.DeploymentRequest, 0, len(payload.Requests))
 
 	for _, req := range payload.Requests {
+		identifier := strings.TrimSpace(req.DeploymentID)
+		if identifier == "" {
+			dropped++
+			continue
+		}
+		if req.StatusCode < 100 || req.StatusCode > 599 {
+			dropped++
+			continue
+		}
+
 		// Parse timestamp or use current time
 		var timestamp time.Time
 		if req.Timestamp != "" {
@@ -157,9 +199,21 @@ func (h *TelemetryHandler) RecordDeploymentRequestBatch(c *gin.Context) {
 			timestamp = time.Now().UTC()
 		}
 
-		deploymentID := req.DeploymentID
-		if h.deploymentService != nil {
-			deploymentID = h.deploymentService.ResolveDeploymentID(req.DeploymentID)
+		if _, seen := unresolvedInBatch[identifier]; seen {
+			dropped++
+			continue
+		}
+
+		deploymentID, seen := resolvedInBatch[identifier]
+		if !seen {
+			var ok bool
+			deploymentID, ok = h.resolveTelemetryDeploymentID(identifier)
+			if !ok {
+				unresolvedInBatch[identifier] = struct{}{}
+				dropped++
+				continue
+			}
+			resolvedInBatch[identifier] = deploymentID
 		}
 
 		// Update Prometheus metrics
@@ -171,32 +225,114 @@ func (h *TelemetryHandler) RecordDeploymentRequestBatch(c *gin.Context) {
 			req.BytesReceived,
 		)
 
-		// Record in database
-		if h.analyticsRepo != nil {
-			dbReq := domain.DeploymentRequest{
-				DeploymentID:  deploymentID,
-				Timestamp:     timestamp,
-				StatusCode:    req.StatusCode,
-				LatencyMs:     req.LatencyMs,
-				BytesSent:     req.BytesSent,
-				BytesReceived: req.BytesReceived,
-				Path:          req.Path,
-			}
+		dbReq := domain.DeploymentRequest{
+			DeploymentID:  deploymentID,
+			Timestamp:     timestamp,
+			StatusCode:    req.StatusCode,
+			LatencyMs:     req.LatencyMs,
+			BytesSent:     req.BytesSent,
+			BytesReceived: req.BytesReceived,
+			Path:          req.Path,
+		}
 
-			if err := h.analyticsRepo.RecordRequest(dbReq); err != nil {
-				failed++
+		dbRequests = append(dbRequests, dbReq)
+	}
+
+	if h.analyticsRepo != nil {
+		if batchRecorder, ok := h.analyticsRepo.(telemetryBatchRecorder); ok {
+			if err := batchRecorder.RecordRequestBatch(dbRequests); err != nil {
+				failed += len(dbRequests)
+				logs.Errorf("telemetry", "failed to record request batch size=%d: %v", len(dbRequests), err)
 			} else {
-				recorded++
+				recorded += len(dbRequests)
 			}
 		} else {
-			recorded++
+			for _, dbReq := range dbRequests {
+				if err := h.analyticsRepo.RecordRequest(dbReq); err != nil {
+					failed++
+				} else {
+					recorded++
+				}
+			}
 		}
+	} else {
+		recorded += len(dbRequests)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "batch_processed",
 		"recorded": recorded,
 		"failed":   failed,
+		"dropped":  dropped,
 		"total":    len(payload.Requests),
 	})
+}
+
+func (h *TelemetryHandler) resolveTelemetryDeploymentID(identifier string) (string, bool) {
+	deploymentID := strings.TrimSpace(identifier)
+	if deploymentID == "" {
+		return "", false
+	}
+
+	if cachedID, ok := h.getCachedDeploymentID(deploymentID); ok {
+		if cachedID == "" {
+			return "", false
+		}
+		return cachedID, true
+	}
+
+	if h.deploymentService == nil {
+		h.setCachedDeploymentID(deploymentID, deploymentID, telemetryResolveCacheTTL)
+		return deploymentID, true
+	}
+
+	resolved := strings.TrimSpace(h.deploymentService.ResolveDeploymentID(deploymentID))
+	if resolved == "" {
+		h.setCachedDeploymentID(deploymentID, "", telemetryResolveNegativeTTL)
+		return "", false
+	}
+
+	if _, err := h.deploymentService.GetDeployment(resolved); err != nil {
+		h.setCachedDeploymentID(deploymentID, "", telemetryResolveNegativeTTL)
+		return "", false
+	}
+
+	h.setCachedDeploymentID(deploymentID, resolved, telemetryResolveCacheTTL)
+	h.setCachedDeploymentID(resolved, resolved, telemetryResolveCacheTTL)
+
+	return resolved, true
+}
+
+func (h *TelemetryHandler) getCachedDeploymentID(identifier string) (string, bool) {
+	now := time.Now()
+
+	h.cacheMu.RLock()
+	entry, ok := h.resolveCache[identifier]
+	h.cacheMu.RUnlock()
+
+	if !ok {
+		return "", false
+	}
+	if now.After(entry.expiresAt) {
+		h.cacheMu.Lock()
+		delete(h.resolveCache, identifier)
+		h.cacheMu.Unlock()
+		return "", false
+	}
+
+	return entry.deploymentID, true
+}
+
+func (h *TelemetryHandler) setCachedDeploymentID(identifier, deploymentID string, ttl time.Duration) {
+	h.cacheMu.Lock()
+	defer h.cacheMu.Unlock()
+
+	if len(h.resolveCache) >= telemetryResolveMaxCacheEntries {
+		h.resolveCache = make(map[string]resolvedDeploymentCacheEntry, telemetryResolveMaxCacheEntries)
+	}
+
+	h.resolveCache[identifier] = resolvedDeploymentCacheEntry{
+		deploymentID: deploymentID,
+		expiresAt:    time.Now().Add(ttl),
+	}
 }
