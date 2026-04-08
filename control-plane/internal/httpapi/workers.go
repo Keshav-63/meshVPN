@@ -74,10 +74,17 @@ func (h *WorkerHandler) Heartbeat(c *gin.Context) {
 		Status      string `json:"status"` // idle, busy
 		CurrentJobs int    `json:"current_jobs"`
 	}
-	c.BindJSON(&req)
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			logs.Errorf("workers", "invalid heartbeat payload worker_id=%s err=%v", workerID, err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid heartbeat payload"})
+			return
+		}
+	}
 
 	// Update heartbeat timestamp
 	if err := h.workerRepo.UpdateHeartbeat(c.Request.Context(), workerID); err != nil {
+		logs.Errorf("workers", "heartbeat update failed worker_id=%s err=%v", workerID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat update failed"})
 		return
 	}
@@ -88,7 +95,15 @@ func (h *WorkerHandler) Heartbeat(c *gin.Context) {
 		if err == nil {
 			worker.Status = req.Status
 			worker.CurrentJobs = req.CurrentJobs
-			h.workerRepo.Update(c.Request.Context(), worker)
+			if err := h.workerRepo.Update(c.Request.Context(), worker); err != nil {
+				logs.Errorf("workers", "heartbeat status update failed worker_id=%s err=%v", workerID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat status update failed"})
+				return
+			}
+		} else {
+			logs.Errorf("workers", "heartbeat worker lookup failed worker_id=%s err=%v", workerID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat worker lookup failed"})
+			return
 		}
 	}
 
@@ -127,10 +142,18 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 	}
 
 	// Mark job as done
-	h.jobRepo.MarkDone(c.Request.Context(), req.JobID)
+	if err := h.jobRepo.MarkDone(c.Request.Context(), req.JobID); err != nil {
+		logs.Errorf("workers", "mark job done failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark job done"})
+		return
+	}
 
 	// Decrement worker job count
-	h.workerRepo.DecrementJobCount(c.Request.Context(), workerID)
+	if err := h.workerRepo.DecrementJobCount(c.Request.Context(), workerID); err != nil {
+		logs.Errorf("workers", "decrement worker job count failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrement worker job count"})
+		return
+	}
 
 	if h.deployRepo != nil && req.DeploymentID != "" {
 		rec, err := h.deployRepo.Get(req.DeploymentID)
@@ -142,6 +165,8 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 			n.FinishedAt = nil
 			n.BuildLogs = n.BuildLogs + "\n=== worker ===\nremote worker reported job complete\n"
 			h.deployRepo.Update(n)
+		} else {
+			logs.Errorf("workers", "deployment lookup failed for job complete worker_id=%s deployment_id=%s err=%v", workerID, req.DeploymentID, err)
 		}
 	}
 
@@ -164,10 +189,18 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 	}
 
 	// Mark job as failed
-	h.jobRepo.MarkFailed(c.Request.Context(), req.JobID, req.Error)
+	if err := h.jobRepo.MarkFailed(c.Request.Context(), req.JobID, req.Error); err != nil {
+		logs.Errorf("workers", "mark job failed failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark job failed"})
+		return
+	}
 
 	// Decrement worker job count
-	h.workerRepo.DecrementJobCount(c.Request.Context(), workerID)
+	if err := h.workerRepo.DecrementJobCount(c.Request.Context(), workerID); err != nil {
+		logs.Errorf("workers", "decrement worker job count failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrement worker job count"})
+		return
+	}
 
 	if h.deployRepo != nil && req.DeploymentID != "" {
 		rec, err := h.deployRepo.Get(req.DeploymentID)
@@ -180,6 +213,8 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 			n.FinishedAt = &finishedAt
 			n.BuildLogs = n.BuildLogs + "\n=== worker error ===\n" + req.Error + "\n"
 			h.deployRepo.Update(n)
+		} else {
+			logs.Errorf("workers", "deployment lookup failed for job failed worker_id=%s deployment_id=%s err=%v", workerID, req.DeploymentID, err)
 		}
 	}
 

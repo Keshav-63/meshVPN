@@ -68,7 +68,6 @@ nano agent.yaml
 - `worker.id`: Unique ID (e.g., `worker-laptop-1`)
 - `worker.name`: Descriptive name (e.g., `"Keshav's Laptop"`)
 - `control_plane.url`: Control-plane Tailscale IP (get from control-plane: `tailscale ip -4`)
-- `control_plane.shared_secret`: Must match `WORKER_SHARED_SECRET` in control-plane `.env`
 - `runtime.kubeconfig`: Path to your kubeconfig file
 - `capabilities.memory_gb`: Total RAM on this machine
 - `capabilities.cpu_cores`: Total CPU cores
@@ -120,7 +119,6 @@ worker:
 
 control_plane:
   url: string                   # Control-plane URL (required)
-  shared_secret: string         # Authentication token (required)
 
 runtime:
   type: string                  # "kubernetes" or "docker"
@@ -268,7 +266,7 @@ All workers will automatically receive jobs based on placement strategy!
 
 ## Security
 
-- **Shared Secret**: Change `WORKER_SHARED_SECRET` in production
+- **Worker Auth**: Shared-secret auth is not enforced in current code path; keep Tailscale ACLs strict.
 - **Tailscale ACLs**: Restrict which machines can communicate
 - **Network Isolation**: Workers should only access control-plane, not each other
 - **Container Registry**: Ensure workers have GHCR authentication

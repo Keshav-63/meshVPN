@@ -6,7 +6,6 @@ worker:
 
 control_plane:
   url: http://control-plane.tail-scale-domain.ts.net:8080  # Or use Tailscale IP
-  shared_secret: "change-this-secret-in-production"
 
 runtime:
   type: kubernetes

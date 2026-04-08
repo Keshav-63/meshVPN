@@ -104,7 +104,10 @@ func (d *JobDistributor) registerControlPlaneAsWorker(ctx context.Context) {
 		CurrentJobs:       0,
 	}
 
-	d.workers.Register(ctx, worker)
+	if err := d.workers.Register(ctx, worker); err != nil {
+		logs.Errorf("distributor", "failed to register control-plane worker worker_id=%s err=%v", worker.WorkerID, err)
+		return
+	}
 	logs.Infof("distributor", "registered control-plane as worker worker_id=%s max_jobs=%d cpu=%d memory=%dGB",
 		worker.WorkerID, d.maxJobsControlPlane, worker.Capabilities.CPUCores, worker.Capabilities.MemoryGB)
 }
@@ -136,7 +139,8 @@ func (d *JobDistributor) distributeJobs(ctx context.Context) {
 	}
 
 	if selectionErr != nil {
-		logs.Debugf("distributor", "no available workers for job job_id=%s", job.JobID)
+		logs.Debugf("distributor", "no available workers for job job_id=%s deployment_id=%s err=%v", job.JobID, job.DeploymentID, selectionErr)
+		d.logPlacementDiagnostics(ctx, job, selectionErr)
 		return // Job stays queued
 	}
 
@@ -148,7 +152,32 @@ func (d *JobDistributor) distributeJobs(ctx context.Context) {
 	}
 
 	// Increment worker's job count
-	d.workers.IncrementJobCount(ctx, selectedWorker.WorkerID)
+	if err := d.workers.IncrementJobCount(ctx, selectedWorker.WorkerID); err != nil {
+		logs.Errorf("distributor", "failed to increment worker job count worker_id=%s job_id=%s err=%v",
+			selectedWorker.WorkerID, job.JobID, err)
+		if relErr := d.jobs.ReleaseFromWorker(ctx, job.JobID); relErr != nil {
+			logs.Errorf("distributor", "failed to release assigned job after increment failure job_id=%s err=%v", job.JobID, relErr)
+		}
+		return
+	}
+
+	if d.deployments != nil {
+		rec, err := d.deployments.Get(job.DeploymentID)
+		if err != nil {
+			logs.Errorf("distributor", "failed to update deployment assignment deployment_id=%s worker_id=%s err=%v",
+				job.DeploymentID, selectedWorker.WorkerID, err)
+		} else {
+			next := rec
+			next.OwnerWorkerID = selectedWorker.WorkerID
+			if next.Status == "queued" {
+				next.Status = "deploying"
+			}
+			next.BuildLogs = next.BuildLogs + "\n=== distributor ===\nassigned to worker " + selectedWorker.WorkerID + "\n"
+			d.deployments.Update(next)
+			logs.Debugf("distributor", "deployment assignment updated deployment_id=%s worker_id=%s status=%s",
+				next.DeploymentID, selectedWorker.WorkerID, next.Status)
+		}
+	}
 
 	logs.Infof("distributor", "assigned job job_id=%s deployment_id=%s to worker_id=%s",
 		job.JobID, job.DeploymentID, selectedWorker.WorkerID)
@@ -158,9 +187,15 @@ func (d *JobDistributor) smartPlacement(ctx context.Context, job domain.Deployme
 	// For small packages, prefer control-plane if available
 	if job.CPUCores <= 0.5 && d.controlPlaneWorker != "" {
 		worker, err := d.workers.Get(ctx, d.controlPlaneWorker)
-		if err == nil && worker.Status == string(domain.WorkerStatusIdle) && worker.CurrentJobs < worker.MaxConcurrentJobs {
+		if err == nil && worker.Status != string(domain.WorkerStatusOffline) && worker.CurrentJobs < worker.MaxConcurrentJobs {
 			logs.Debugf("distributor", "smart placement: small package → control-plane")
 			return worker, nil
+		}
+		if err != nil {
+			logs.Warnf("distributor", "smart placement: control-plane worker lookup failed worker_id=%s err=%v", d.controlPlaneWorker, err)
+		} else {
+			logs.Warnf("distributor", "smart placement: control-plane unavailable worker_id=%s status=%s jobs=%d/%d",
+				worker.WorkerID, worker.Status, worker.CurrentJobs, worker.MaxConcurrentJobs)
 		}
 	}
 
@@ -174,9 +209,15 @@ func (d *JobDistributor) smartPlacement(ctx context.Context, job domain.Deployme
 	// Fallback to control-plane if no remote workers
 	if d.controlPlaneWorker != "" {
 		worker, err := d.workers.Get(ctx, d.controlPlaneWorker)
-		if err == nil && worker.Status == string(domain.WorkerStatusIdle) && worker.CurrentJobs < worker.MaxConcurrentJobs {
+		if err == nil && worker.Status != string(domain.WorkerStatusOffline) && worker.CurrentJobs < worker.MaxConcurrentJobs {
 			logs.Debugf("distributor", "smart placement: fallback → control-plane")
 			return worker, nil
+		}
+		if err != nil {
+			logs.Warnf("distributor", "smart placement fallback: control-plane worker lookup failed worker_id=%s err=%v", d.controlPlaneWorker, err)
+		} else {
+			logs.Warnf("distributor", "smart placement fallback: control-plane unavailable worker_id=%s status=%s jobs=%d/%d",
+				worker.WorkerID, worker.Status, worker.CurrentJobs, worker.MaxConcurrentJobs)
 		}
 	}
 
@@ -187,9 +228,17 @@ func (d *JobDistributor) localFirstPlacement(ctx context.Context) (domain.Worker
 	// Try control-plane first
 	if d.controlPlaneWorker != "" {
 		worker, err := d.workers.Get(ctx, d.controlPlaneWorker)
-		if err == nil && worker.Status == string(domain.WorkerStatusIdle) && worker.CurrentJobs < worker.MaxConcurrentJobs {
+		if err == nil && worker.Status != string(domain.WorkerStatusOffline) && worker.CurrentJobs < worker.MaxConcurrentJobs {
 			return worker, nil
 		}
+		if err != nil {
+			logs.Warnf("distributor", "local-first: control-plane worker lookup failed worker_id=%s err=%v", d.controlPlaneWorker, err)
+		} else {
+			logs.Warnf("distributor", "local-first: control-plane unavailable worker_id=%s status=%s jobs=%d/%d",
+				worker.WorkerID, worker.Status, worker.CurrentJobs, worker.MaxConcurrentJobs)
+		}
+	} else {
+		logs.Warnf("distributor", "local-first: control-plane worker id is empty")
 	}
 
 	// Fallback to remote workers
@@ -221,6 +270,7 @@ func (d *JobDistributor) getRemoteWorker(ctx context.Context) (domain.Worker, er
 	}
 
 	if len(candidates) == 0 {
+		logs.Warnf("distributor", "remote worker selection: no eligible remote candidates total_workers=%d control_plane_worker=%s", len(workers), d.controlPlaneWorker)
 		return domain.Worker{}, store.ErrNoAvailableWorkers
 	}
 
@@ -240,6 +290,43 @@ func (d *JobDistributor) getRemoteWorker(ctx context.Context) (domain.Worker, er
 	})
 
 	return candidates[0], nil
+}
+
+func (d *JobDistributor) logPlacementDiagnostics(ctx context.Context, job domain.DeploymentJob, selectionErr error) {
+	workers, err := d.workers.List(ctx)
+	if err != nil {
+		logs.Errorf("distributor", "placement diagnostics failed job_id=%s deployment_id=%s err=%v",
+			job.JobID, job.DeploymentID, err)
+		return
+	}
+
+	if len(workers) == 0 {
+		logs.Warnf("distributor", "placement diagnostics: no workers registered job_id=%s deployment_id=%s strategy=%s err=%v",
+			job.JobID, job.DeploymentID, d.placementStrategy, selectionErr)
+		return
+	}
+
+	logs.Warnf("distributor", "placement diagnostics: job_id=%s deployment_id=%s strategy=%s err=%v workers=%d",
+		job.JobID, job.DeploymentID, d.placementStrategy, selectionErr, len(workers))
+
+	now := time.Now()
+	for _, w := range workers {
+		role := "remote"
+		if w.WorkerID == d.controlPlaneWorker {
+			role = "control-plane"
+		}
+
+		heartbeatAge := "none"
+		if w.LastHeartbeat != nil {
+			heartbeatAge = now.Sub(*w.LastHeartbeat).Truncate(time.Second).String()
+		}
+
+		freeSlots := w.MaxConcurrentJobs - w.CurrentJobs
+		eligible := w.Status != string(domain.WorkerStatusOffline) && freeSlots > 0
+
+		logs.Warnf("distributor", "worker snapshot worker_id=%s role=%s status=%s jobs=%d/%d free_slots=%d eligible=%t heartbeat_age=%s",
+			w.WorkerID, role, w.Status, w.CurrentJobs, w.MaxConcurrentJobs, freeSlots, eligible, heartbeatAge)
+	}
 }
 
 func (d *JobDistributor) reconcileWorkerHealth(ctx context.Context) {

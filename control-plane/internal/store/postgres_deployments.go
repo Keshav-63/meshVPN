@@ -48,12 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_deployments_status ON deployments(status);
 
 func (r *PostgresDeploymentRepository) Start(rec domain.DeploymentRecord) {
 	logs.Debugf("store-postgres", "start deployment deployment_id=%s status=%s", rec.DeploymentID, rec.Status)
-	_ = r.upsert(rec)
+	if err := r.upsert(rec); err != nil {
+		logs.Errorf("store-postgres", "failed to start deployment deployment_id=%s: %v", rec.DeploymentID, err)
+	}
 }
 
 func (r *PostgresDeploymentRepository) Update(rec domain.DeploymentRecord) {
 	logs.Debugf("store-postgres", "update deployment deployment_id=%s status=%s", rec.DeploymentID, rec.Status)
-	_ = r.upsert(rec)
+	if err := r.upsert(rec); err != nil {
+		logs.Errorf("store-postgres", "failed to update deployment deployment_id=%s: %v", rec.DeploymentID, err)
+	}
 }
 
 func (r *PostgresDeploymentRepository) Get(id string) (domain.DeploymentRecord, error) {

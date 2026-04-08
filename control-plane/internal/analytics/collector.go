@@ -122,11 +122,14 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 		LastUpdated:  time.Now(),
 	}
 
+	// Track which data sources failed for diagnostic logging
+	var failedSources []string
+
 	// Get pod counts from Kubernetes
 	current, desired, err := c.getPodCounts(deploymentID)
 	if err != nil {
-		logs.Debugf("analytics-collector", "failed to get pod counts for %s: %v", deploymentID, err)
-		// Continue with zeros if K8s query fails
+		logs.Warnf("analytics-collector", "failed to get pod counts for %s: %v (using zeros)", deploymentID, err)
+		failedSources = append(failedSources, "k8s_pod_counts")
 	}
 	metrics.CurrentPods = current
 	metrics.DesiredPods = desired
@@ -137,7 +140,8 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 	// Get request counts from database
 	total, last1h, last24h, err := c.analyticsRepo.GetRequestCounts(deploymentID)
 	if err != nil {
-		logs.Debugf("analytics-collector", "failed to get request counts for %s: %v", deploymentID, err)
+		logs.Warnf("analytics-collector", "failed to get request counts for %s: %v (using zeros)", deploymentID, err)
+		failedSources = append(failedSources, "db_request_counts")
 	}
 	metrics.RequestCountTotal = total
 	metrics.RequestCount1h = last1h
@@ -151,7 +155,8 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 	// Get bandwidth stats
 	sent, received, err := c.analyticsRepo.GetBandwidthStats(deploymentID)
 	if err != nil {
-		logs.Debugf("analytics-collector", "failed to get bandwidth for %s: %v", deploymentID, err)
+		logs.Warnf("analytics-collector", "failed to get bandwidth for %s: %v (using zeros)", deploymentID, err)
+		failedSources = append(failedSources, "db_bandwidth")
 	}
 	metrics.BandwidthSentBytes = sent
 	metrics.BandwidthRecvBytes = received
@@ -159,7 +164,8 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 	// Calculate latency percentiles (last hour)
 	p50, p90, p99, err := c.analyticsRepo.CalculatePercentiles(deploymentID, 1*time.Hour)
 	if err != nil {
-		logs.Debugf("analytics-collector", "failed to calculate percentiles for %s: %v", deploymentID, err)
+		logs.Warnf("analytics-collector", "failed to calculate percentiles for %s: %v (using zeros)", deploymentID, err)
+		failedSources = append(failedSources, "db_latency_percentiles")
 	}
 	metrics.LatencyP50Ms = p50
 	metrics.LatencyP90Ms = p90
@@ -168,7 +174,8 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 	// Get CPU/Memory usage from Kubernetes metrics-server.
 	cpuPercent, memoryMB, err := c.getDeploymentResourceUsage(deploymentID)
 	if err != nil {
-		logs.Debugf("analytics-collector", "failed to get resource usage for %s: %v", deploymentID, err)
+		logs.Warnf("analytics-collector", "failed to get resource usage for %s: %v (using zeros)", deploymentID, err)
+		failedSources = append(failedSources, "k8s_resource_usage")
 	}
 	metrics.CPUUsagePercent = cpuPercent
 	metrics.MemoryUsageMB = memoryMB
@@ -179,8 +186,14 @@ func (c *MetricsCollector) aggregateDeployment(ctx context.Context, deploymentID
 		return fmt.Errorf("update metrics: %w", err)
 	}
 
-	logs.Debugf("analytics-collector", "updated metrics deployment_id=%s pods=%d/%d requests_1h=%d",
-		deploymentID, current, desired, last1h)
+	// Log with quality indicator if any sources failed
+	if len(failedSources) > 0 {
+		logs.Warnf("analytics-collector", "partial update deployment_id=%s pods=%d/%d requests_1h=%d failed_sources=%v",
+			deploymentID, current, desired, last1h, failedSources)
+	} else {
+		logs.Debugf("analytics-collector", "updated metrics deployment_id=%s pods=%d/%d requests_1h=%d",
+			deploymentID, current, desired, last1h)
+	}
 
 	return nil
 }

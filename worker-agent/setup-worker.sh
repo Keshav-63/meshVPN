@@ -178,16 +178,6 @@ else
     echo -e "${GREEN}✓ Control-plane reachable${NC}"
 fi
 
-# Get shared secret
-echo ""
-echo "Enter the worker shared secret (from control-plane .env):"
-echo "(Default: meshvpn-worker-secret-change-in-production)"
-read -p "Shared secret: " SHARED_SECRET
-
-if [ -z "$SHARED_SECRET" ]; then
-    SHARED_SECRET="meshvpn-worker-secret-change-in-production"
-fi
-
 # Update agent.yaml
 cat > agent.yaml <<EOF
 # Worker Agent Configuration
@@ -201,7 +191,6 @@ worker:
 
 control_plane:
   url: http://$CONTROL_PLANE_IP:8080
-  shared_secret: "$SHARED_SECRET"
 
 runtime:
   type: kubernetes

@@ -15,20 +15,22 @@ import (
 type DeploymentWorker struct {
 	repo         store.DeploymentRepository
 	jobs         store.JobRepository
+	workers      store.WorkerRepository
 	runner       *runtime.Runner
 	pollInterval time.Duration
 	enableCPUHPA bool
 	workerID     string
+	useAssigned  bool
 }
 
-func NewDeploymentWorker(repo store.DeploymentRepository, jobs store.JobRepository, runner *runtime.Runner, pollInterval time.Duration, enableCPUHPA bool, workerID string) *DeploymentWorker {
+func NewDeploymentWorker(repo store.DeploymentRepository, jobs store.JobRepository, workers store.WorkerRepository, runner *runtime.Runner, pollInterval time.Duration, enableCPUHPA bool, workerID string, useAssigned bool) *DeploymentWorker {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
 	if strings.TrimSpace(workerID) == "" {
 		workerID = "control-plane-local"
 	}
-	return &DeploymentWorker{repo: repo, jobs: jobs, runner: runner, pollInterval: pollInterval, enableCPUHPA: enableCPUHPA, workerID: workerID}
+	return &DeploymentWorker{repo: repo, jobs: jobs, workers: workers, runner: runner, pollInterval: pollInterval, enableCPUHPA: enableCPUHPA, workerID: workerID, useAssigned: useAssigned}
 }
 
 func (w *DeploymentWorker) Start(ctx context.Context) {
@@ -54,7 +56,16 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 		telemetry.ObserveWorkerJob(finalStatus, startedAt)
 	}()
 
-	job, err := w.jobs.ClaimNext(ctx)
+	var (
+		job domain.DeploymentJob
+		err error
+	)
+
+	if w.useAssigned {
+		job, err = w.jobs.ClaimForWorker(ctx, w.workerID)
+	} else {
+		job, err = w.jobs.ClaimNext(ctx)
+	}
 	if err != nil {
 		if err == store.ErrNoQueuedJobs {
 			finalStatus = "empty"
@@ -62,11 +73,22 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 			return
 		}
 		finalStatus = "claim_failed"
-		logs.Errorf("worker", "claim next job failed err=%v", err)
+		logs.Errorf("worker", "claim job failed worker_id=%s assigned_mode=%t err=%v", w.workerID, w.useAssigned, err)
 		return
 	}
 
-	logs.Infof("worker", "processing job job_id=%s deployment_id=%s", job.JobID, job.DeploymentID)
+	if w.useAssigned && w.workers != nil {
+		defer func() {
+			if decErr := w.workers.DecrementJobCount(ctx, w.workerID); decErr != nil {
+				logs.Errorf("worker", "failed to decrement worker job count worker_id=%s err=%v", w.workerID, decErr)
+				return
+			}
+			logs.Debugf("worker", "decremented worker job count worker_id=%s job_id=%s", w.workerID, job.JobID)
+		}()
+	}
+
+	logs.Infof("worker", "processing job worker_id=%s assigned_mode=%t job_id=%s deployment_id=%s assigned_worker_id=%s",
+		w.workerID, w.useAssigned, job.JobID, job.DeploymentID, job.AssignedWorkerID)
 	rec, getErr := w.repo.Get(job.DeploymentID)
 	if getErr != nil {
 		finalStatus = "lookup_failed"

@@ -168,6 +168,9 @@ EOF
 
 kubectl apply -f /tmp/traffic-forwarder-deploy.yaml
 
+# Force restart so the running pod picks the latest imported local image tag.
+kubectl rollout restart deployment traffic-forwarder -n default
+
 echo "✅ Traffic forwarder deployed"
 
 # Step 6: Wait for pod to be ready

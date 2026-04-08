@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -54,6 +55,7 @@ ON CONFLICT (worker_id) DO UPDATE SET
 	status = EXCLUDED.status,
 	capabilities = EXCLUDED.capabilities,
 	max_concurrent_jobs = EXCLUDED.max_concurrent_jobs,
+	current_jobs = EXCLUDED.current_jobs,
 	last_heartbeat = EXCLUDED.last_heartbeat,
 	updated_at = NOW()
 `
@@ -207,7 +209,17 @@ ORDER BY current_jobs ASC, created_at ASC
 func (r *PostgresWorkerRepository) UpdateHeartbeat(ctx context.Context, workerID string) error {
 	const q = `UPDATE workers SET last_heartbeat = NOW(), updated_at = NOW() WHERE worker_id = $1`
 	logs.Debugf("workers-postgres", "heartbeat worker_id=%s", workerID)
-	_, err := r.db.ExecContext(ctx, q, workerID)
+	res, err := r.db.ExecContext(ctx, q, workerID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("worker not found: %s", workerID)
+	}
 	return err
 }
 
@@ -224,7 +236,17 @@ UPDATE workers SET
 WHERE worker_id = $1
 `
 	logs.Debugf("workers-postgres", "increment job count worker_id=%s", workerID)
-	_, err := r.db.ExecContext(ctx, q, workerID)
+	res, err := r.db.ExecContext(ctx, q, workerID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("worker not found: %s", workerID)
+	}
 	return err
 }
 
@@ -241,7 +263,17 @@ UPDATE workers SET
 WHERE worker_id = $1
 `
 	logs.Debugf("workers-postgres", "decrement job count worker_id=%s", workerID)
-	_, err := r.db.ExecContext(ctx, q, workerID)
+	res, err := r.db.ExecContext(ctx, q, workerID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("worker not found: %s", workerID)
+	}
 	return err
 }
 
@@ -249,7 +281,17 @@ WHERE worker_id = $1
 func (r *PostgresWorkerRepository) MarkOffline(ctx context.Context, workerID string) error {
 	const q = `UPDATE workers SET status = 'offline', updated_at = NOW() WHERE worker_id = $1`
 	logs.Infof("workers-postgres", "marking worker offline worker_id=%s", workerID)
-	_, err := r.db.ExecContext(ctx, q, workerID)
+	res, err := r.db.ExecContext(ctx, q, workerID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("worker not found: %s", workerID)
+	}
 	return err
 }
 

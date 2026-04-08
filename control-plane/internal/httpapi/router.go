@@ -25,7 +25,7 @@ type DeployRequestPayload struct {
 	Env       map[string]string `json:"env"`
 	BuildArgs map[string]string `json:"build_args"`
 
-	// Advanced options (optional - overridden by package if subscriber)
+	// Advanced autoscaling options (optional)
 	ScalingMode          string            `json:"scaling_mode" example:"horizontal"`
 	MinReplicas          int               `json:"min_replicas" example:"1"`
 	MaxReplicas          int               `json:"max_replicas" example:"3"`
@@ -62,7 +62,7 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 	logs.Infof("http", "CORS enabled for origin: %s", cfg.FrontendURL)
 
 	// Initialize handlers
-	handlers := NewHandlers(deploymentService)
+	handlers := NewHandlers(deploymentService, cfg.EnableCPUHPA)
 
 	// Initialize deployment details handler (nil-safe, will be created later if service is available)
 	var detailsHandler *DeploymentDetailsHandler
@@ -117,6 +117,7 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 	if analyticsHandler != nil {
 		protected.GET("/deployments/:id/analytics", analyticsHandler.GetAnalytics)
 		protected.GET("/deployments/:id/analytics/stream", analyticsHandler.StreamAnalytics)
+		protected.GET("/user/analytics", analyticsHandler.GetUserAnalytics)
 		logs.Infof("http", "analytics endpoints registered")
 	}
 
@@ -130,6 +131,7 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 		)
 
 		protected.GET("/platform/analytics", platformAnalyticsHandler.GetPlatformAnalytics)
+		protected.GET("/platform/analytics/deployments", platformAnalyticsHandler.GetDeploymentAnalytics)
 		protected.GET("/platform/workers/:id/analytics", platformAnalyticsHandler.GetWorkerAnalytics)
 		logs.Infof("http", "platform analytics endpoints registered")
 	}

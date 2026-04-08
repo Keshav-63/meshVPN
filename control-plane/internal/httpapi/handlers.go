@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -15,11 +16,13 @@ import (
 
 type Handlers struct {
 	deploymentService *service.DeploymentService
+	enableCPUHPA      bool
 }
 
-func NewHandlers(deploymentService *service.DeploymentService) *Handlers {
+func NewHandlers(deploymentService *service.DeploymentService, enableCPUHPA bool) *Handlers {
 	return &Handlers{
 		deploymentService: deploymentService,
+		enableCPUHPA:      enableCPUHPA,
 	}
 }
 
@@ -80,16 +83,9 @@ func (h *Handlers) Deploy(c *gin.Context) {
 	}
 
 	// Get user from context (set by auth middleware)
-	user, userExists := c.Get("auth.user")
 	var actualUser domain.User
-	var isSubscriber bool
-
-	if userExists {
+	if user, userExists := c.Get("auth.user"); userExists {
 		actualUser = user.(domain.User)
-		isSubscriber = actualUser.IsSubscriber
-	} else {
-		// Fallback for when auth is disabled
-		isSubscriber = false
 	}
 
 	// Validate and get package specification
@@ -107,31 +103,24 @@ func (h *Handlers) Deploy(c *gin.Context) {
 
 	packageSpec, _ := domain.GetPackageSpec(domain.ResourcePackage(packageName))
 
-	// Determine scaling behavior based on subscription status
-	scalingMode := "none"
+	// Autoscaling is enabled for all users.
+	scalingMode := "horizontal"
 	minReplicas := 1
-	maxReplicas := 1
+	maxReplicas := packageSpec.MaxReplicas
 	cpuTarget := 70 // Default CPU target percentage
+	memoryTarget := getMemoryTargetUtilization()
 
-	if isSubscriber {
-		// Subscribers get autoscaling enabled
-		scalingMode = "horizontal"
-		minReplicas = 1
-		maxReplicas = packageSpec.MaxReplicas
-
-		// Allow subscribers to customize scaling parameters
-		if payload.CPUTargetUtilization > 0 && payload.CPUTargetUtilization <= 100 {
-			cpuTarget = payload.CPUTargetUtilization
-		}
-		if payload.MinReplicas > 0 {
-			minReplicas = payload.MinReplicas
-		}
-		if payload.MaxReplicas > 0 && payload.MaxReplicas <= packageSpec.MaxReplicas {
-			maxReplicas = payload.MaxReplicas
-		}
+	if payload.CPUTargetUtilization > 0 && payload.CPUTargetUtilization <= 100 {
+		cpuTarget = payload.CPUTargetUtilization
+	}
+	if payload.MinReplicas > 0 {
+		minReplicas = payload.MinReplicas
+	}
+	if payload.MaxReplicas > 0 && payload.MaxReplicas <= packageSpec.MaxReplicas {
+		maxReplicas = payload.MaxReplicas
 	}
 
-	logs.Infof("http", "deploy package=%s subscriber=%t scaling=%s user_id=%s", packageName, isSubscriber, scalingMode, actualUser.UserID)
+	logs.Infof("http", "deploy package=%s scaling=%s user_id=%s", packageName, scalingMode, actualUser.UserID)
 
 	rec, err := h.deploymentService.EnqueueDeploy(c.Request.Context(), service.DeployRequest{
 		Repo:         payload.Repo,
@@ -145,7 +134,7 @@ func (h *Handlers) Deploy(c *gin.Context) {
 		MaxReplicas:  maxReplicas,
 		CPUTarget:    cpuTarget,
 		CPURequest:   int(packageSpec.CPUCores * 1000), // Convert to millicores
-		CPULimit:     500,                              // Safety limit
+		CPULimit:     int(packageSpec.CPUCores * 2000), // Keep limit proportional to package size
 		NodeSelector: payload.NodeSelector,
 		Env:          payload.Env,
 		BuildArgs:    payload.BuildArgs,
@@ -168,21 +157,22 @@ func (h *Handlers) Deploy(c *gin.Context) {
 	}
 
 	response := DeployResponse{
-		Message:              "deployment queued",
-		DeploymentID:         rec.DeploymentID,
-		Status:               rec.Status,
-		Repo:                 rec.Repo,
-		Subdomain:            rec.Subdomain,
-		URL:                  fmt.Sprintf("https://%s.%s", rec.Subdomain, "keshavstack.tech"),
-		Port:                 rec.Port,
-		Package:              packageName,
-		CPUCores:             packageSpec.CPUCores,
-		MemoryMB:             packageSpec.MemoryMB,
-		ScalingMode:          rec.ScalingMode,
-		MinReplicas:          rec.MinReplicas,
-		MaxReplicas:          rec.MaxReplicas,
-		CPUTargetUtilization: rec.CPUTarget,
-		AutoscalingEnabled:   isSubscriber,
+		Message:                 "deployment queued",
+		DeploymentID:            rec.DeploymentID,
+		Status:                  rec.Status,
+		Repo:                    rec.Repo,
+		Subdomain:               rec.Subdomain,
+		URL:                     fmt.Sprintf("https://%s.%s", rec.Subdomain, "keshavstack.tech"),
+		Port:                    rec.Port,
+		Package:                 packageName,
+		CPUCores:                packageSpec.CPUCores,
+		MemoryMB:                packageSpec.MemoryMB,
+		ScalingMode:             rec.ScalingMode,
+		MinReplicas:             rec.MinReplicas,
+		MaxReplicas:             rec.MaxReplicas,
+		CPUTargetUtilization:    rec.CPUTarget,
+		MemoryTargetUtilization: memoryTarget,
+		AutoscalingEnabled:      rec.ScalingMode == "horizontal" && h.enableCPUHPA,
 	}
 
 	c.JSON(http.StatusAccepted, response)
@@ -217,6 +207,20 @@ func (h *Handlers) ListDeployments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"deployments": h.deploymentService.ListDeploymentsByUser(actualUser.UserID),
 	})
+}
+
+func getMemoryTargetUtilization() int {
+	raw := strings.TrimSpace(os.Getenv("HPA_MEMORY_TARGET_UTILIZATION"))
+	if raw == "" {
+		return 75
+	}
+
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 || parsed > 100 {
+		return 75
+	}
+
+	return parsed
 }
 
 // GetBuildLogs godoc

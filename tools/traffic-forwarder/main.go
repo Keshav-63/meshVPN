@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -14,15 +16,15 @@ import (
 
 // TraefikAccessLog represents a Traefik access log entry
 type TraefikAccessLog struct {
-	ClientHost       string  `json:"ClientHost"`
-	RequestHost      string  `json:"RequestHost"`
-	RequestMethod    string  `json:"RequestMethod"`
-	RequestPath      string  `json:"RequestPath"`
-	OriginStatus     int     `json:"OriginStatus"`
-	Duration         int64   `json:"Duration"` // Microseconds
-	OriginContentSize int64  `json:"OriginContentSize"`
-	RequestContentSize int64 `json:"RequestContentSize"`
-	Time             string  `json:"time"`
+	ClientHost         string `json:"ClientHost"`
+	RequestHost        string `json:"RequestHost"`
+	RequestMethod      string `json:"RequestMethod"`
+	RequestPath        string `json:"RequestPath"`
+	OriginStatus       int    `json:"OriginStatus"`
+	Duration           int64  `json:"Duration"` // Microseconds
+	OriginContentSize  int64  `json:"OriginContentSize"`
+	RequestContentSize int64  `json:"RequestContentSize"`
+	Time               string `json:"time"`
 }
 
 // TelemetryPayload for control-plane endpoint
@@ -47,67 +49,165 @@ func main() {
 		traefikNamespace = "kube-system"
 	}
 
-	traefikPod := os.Getenv("TRAEFIK_POD")
-	if traefikPod == "" {
-		// Auto-detect Traefik pod
-		cmd := exec.Command("kubectl", "get", "pods", "-n", traefikNamespace,
-			"-l", "app.kubernetes.io/name=traefik", "-o", "jsonpath={.items[0].metadata.name}")
-		output, err := cmd.Output()
-		if err != nil {
-			log.Fatalf("Failed to find Traefik pod: %v", err)
-		}
-		traefikPod = strings.TrimSpace(string(output))
-	}
-
-	if traefikPod == "" {
-		log.Fatal("Could not find Traefik pod. Set TRAEFIK_POD environment variable.")
-	}
+	configuredTraefikPod := os.Getenv("TRAEFIK_POD")
 
 	log.Printf("Starting traffic forwarder...")
 	log.Printf("Control Plane: %s", controlPlaneURL)
-	log.Printf("Traefik Pod: %s (namespace: %s)", traefikPod, traefikNamespace)
+	log.Printf("Traefik Namespace: %s", traefikNamespace)
 
-	// Start tailing Traefik access logs
-	cmd := exec.Command("kubectl", "logs", "-n", traefikNamespace, "-f", traefikPod, "-c", "traefik")
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to get stdout pipe: %v", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		log.Fatalf("Failed to start kubectl logs: %v", err)
-	}
-
-	log.Println("Tailing Traefik access logs...")
-
-	// Read logs line by line
-	buf := make([]byte, 0, 4096)
 	for {
-		tmp := make([]byte, 1024)
-		n, err := stdout.Read(tmp)
+		traefikPod, containerName, err := resolveTraefikTarget(traefikNamespace, configuredTraefikPod)
 		if err != nil {
-			log.Printf("Read error: %v", err)
-			time.Sleep(1 * time.Second)
+			log.Printf("Failed to resolve Traefik target: %v", err)
+			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		buf = append(buf, tmp[:n]...)
+		log.Printf("Tailing Traefik access logs from pod=%s container=%s", traefikPod, containerName)
+		if err := streamTraefikLogs(traefikNamespace, traefikPod, containerName, controlPlaneURL); err != nil {
+			log.Printf("Log stream ended: %v", err)
+		} else {
+			log.Printf("Log stream ended without error, reconnecting")
+		}
 
-		// Process complete lines
-		for {
-			idx := bytes.IndexByte(buf, '\n')
-			if idx == -1 {
-				break
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func streamTraefikLogs(namespace, pod, containerName, controlPlaneURL string) error {
+	args := []string{"logs", "-n", namespace, "-f", pod, "--tail=20"}
+	if containerName != "" {
+		args = append(args, "-c", containerName)
+	}
+
+	cmd := exec.Command("kubectl", args...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start kubectl logs: %w", err)
+	}
+
+	errLines := make(chan string, 32)
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			line := strings.TrimSpace(s.Text())
+			if line == "" {
+				continue
 			}
+			errLines <- line
+		}
+		close(errLines)
+	}()
 
-			line := buf[:idx]
-			buf = buf[idx+1:]
+	outScanner := bufio.NewScanner(stdout)
+	for outScanner.Scan() {
+		line := strings.TrimSpace(outScanner.Text())
+		if line == "" {
+			continue
+		}
+		processLogLine(line, controlPlaneURL)
+	}
 
-			// Process log line
-			processLogLine(string(line), controlPlaneURL)
+	if scanErr := outScanner.Err(); scanErr != nil && scanErr != io.EOF {
+		_ = cmd.Wait()
+		return fmt.Errorf("stdout scanner error: %w", scanErr)
+	}
+
+	waitErr := cmd.Wait()
+	var stderrJoined strings.Builder
+	for line := range errLines {
+		log.Printf("kubectl logs stderr: %s", line)
+		if stderrJoined.Len() > 0 {
+			stderrJoined.WriteString(" | ")
+		}
+		stderrJoined.WriteString(line)
+	}
+
+	if waitErr != nil {
+		if stderrJoined.Len() > 0 {
+			return fmt.Errorf("kubectl logs failed: %w (%s)", waitErr, stderrJoined.String())
+		}
+		return fmt.Errorf("kubectl logs failed: %w", waitErr)
+	}
+
+	if stderrJoined.Len() > 0 {
+		return fmt.Errorf("kubectl logs ended: %s", stderrJoined.String())
+	}
+
+	return nil
+}
+
+func resolveTraefikTarget(namespace, configuredPod string) (pod string, container string, err error) {
+	if strings.TrimSpace(configuredPod) != "" {
+		containerName, containerErr := resolveTraefikContainer(namespace, configuredPod)
+		if containerErr != nil {
+			return "", "", containerErr
+		}
+		return configuredPod, containerName, nil
+	}
+
+	labelSelectors := []string{
+		"app.kubernetes.io/name=traefik",
+		"app=traefik",
+	}
+
+	for _, selector := range labelSelectors {
+		cmd := exec.Command(
+			"kubectl", "get", "pods", "-n", namespace,
+			"-l", selector,
+			"--field-selector=status.phase=Running",
+			"-o", "jsonpath={.items[0].metadata.name}",
+		)
+		output, cmdErr := cmd.Output()
+		if cmdErr != nil {
+			continue
+		}
+
+		candidate := strings.TrimSpace(string(output))
+		if candidate == "" {
+			continue
+		}
+
+		containerName, containerErr := resolveTraefikContainer(namespace, candidate)
+		if containerErr != nil {
+			continue
+		}
+
+		return candidate, containerName, nil
+	}
+
+	return "", "", fmt.Errorf("could not find running Traefik pod in namespace %s", namespace)
+}
+
+func resolveTraefikContainer(namespace, pod string) (string, error) {
+	cmd := exec.Command("kubectl", "get", "pod", "-n", namespace, pod, "-o", "jsonpath={.spec.containers[*].name}")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("get containers for pod %s: %w", pod, err)
+	}
+
+	containers := strings.Fields(strings.TrimSpace(string(output)))
+	if len(containers) == 0 {
+		return "", fmt.Errorf("no containers found in pod %s", pod)
+	}
+
+	for _, name := range containers {
+		if name == "traefik" {
+			return name, nil
 		}
 	}
+
+	return containers[0], nil
 }
 
 func processLogLine(line string, controlPlaneURL string) {

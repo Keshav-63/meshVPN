@@ -2,14 +2,23 @@ package logs
 
 import "log"
 
+func logf(level string, component string, format string, args ...any) {
+	log.Printf("[%s] [%s] "+format, append([]any{level, component}, args...)...)
+}
+
 func Debugf(component string, format string, args ...any) {
-	log.Printf("[DEBUG] [%s] "+format, append([]any{component}, args...)...)
+	logf("DEBUG", component, format, args...)
 }
 
 func Infof(component string, format string, args ...any) {
-	log.Printf("[INFO] [%s] "+format, append([]any{component}, args...)...)
+	logf("INFO", component, format, args...)
+
+}
+
+func Warnf(component string, format string, args ...any) {
+	logf("WARN", component, format, args...)
 }
 
 func Errorf(component string, format string, args ...any) {
-	log.Printf("[ERROR] [%s] "+format, append([]any{component}, args...)...)
+	logf("ERROR", component, format, args...)
 }

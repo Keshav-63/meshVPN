@@ -65,9 +65,10 @@ func (h *TelemetryHandler) RecordDeploymentRequest(c *gin.Context) {
 		return
 	}
 
-	// Use payload deployment_id as-is (can be UUID or subdomain)
-	// The metrics collector will handle subdomain lookups when aggregating
 	deploymentID := payload.DeploymentID
+	if h.deploymentService != nil {
+		deploymentID = h.deploymentService.ResolveDeploymentID(payload.DeploymentID)
+	}
 
 	// Parse timestamp or use current time
 	var timestamp time.Time
@@ -156,9 +157,14 @@ func (h *TelemetryHandler) RecordDeploymentRequestBatch(c *gin.Context) {
 			timestamp = time.Now().UTC()
 		}
 
+		deploymentID := req.DeploymentID
+		if h.deploymentService != nil {
+			deploymentID = h.deploymentService.ResolveDeploymentID(req.DeploymentID)
+		}
+
 		// Update Prometheus metrics
 		telemetry.ObserveDeploymentRequest(
-			req.DeploymentID,
+			deploymentID,
 			req.StatusCode,
 			req.LatencyMs/1000.0,
 			req.BytesSent,
@@ -168,7 +174,7 @@ func (h *TelemetryHandler) RecordDeploymentRequestBatch(c *gin.Context) {
 		// Record in database
 		if h.analyticsRepo != nil {
 			dbReq := domain.DeploymentRequest{
-				DeploymentID:  req.DeploymentID,
+				DeploymentID:  deploymentID,
 				Timestamp:     timestamp,
 				StatusCode:    req.StatusCode,
 				LatencyMs:     req.LatencyMs,

@@ -21,9 +21,6 @@ control_plane:
   # Control-plane Tailscale IP: 100.88.151.60
   url: http://100.88.151.60:8080
 
-  # Shared secret for authentication (must match WORKER_SHARED_SECRET in control-plane .env)
-  shared_secret: "meshvpn-worker-secret-change-in-production"
-
 runtime:
   # Runtime type: kubernetes or docker
   type: kubernetes

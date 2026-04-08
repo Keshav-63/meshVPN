@@ -39,9 +39,17 @@ import (
 
 func main() {
 	cfg := config.Load()
+	logs.Infof("main", "startup config runtime_backend=%s require_auth=%t multi_worker=%t control_plane_as_worker=%t db_configured=%t k8s_namespace=%s worker_interval=%s analytics_hpa=%t placement=%s",
+		cfg.RuntimeBackend, cfg.RequireAuth, cfg.EnableMultiWorker, cfg.ControlPlaneAsWorker, cfg.DatabaseURL != "", cfg.K8sNamespace, cfg.WorkerPollInterval, cfg.EnableCPUHPA, cfg.JobPlacementStrategy)
 	deps, cleanup, err := store.Initialize(cfg)
 	if err != nil {
-		log.Printf("deployment repository init failed, falling back to in-memory store: %v", err)
+		// If DATABASE_URL is set but connection failed, fail hard
+		if cfg.DatabaseURL != "" {
+			log.Fatalf("CRITICAL: Database connection failed with DATABASE_URL set. Fix the connection string and try again. Error: %v", err)
+		}
+
+		// Otherwise, gracefully fallback to in-memory store
+		log.Printf("WARNING: DATABASE_URL not set, falling back to in-memory store. Multi-worker features disabled. Error: %v", err)
 		deps = store.Dependencies{
 			DeploymentRepo: store.NewInMemoryDeploymentRepository(),
 			JobRepo:        store.NewInMemoryJobRepository(),
@@ -53,10 +61,12 @@ func main() {
 	}
 
 	telemetry.Register()
+	logs.Infof("main", "telemetry initialized")
 
 	driver := runtime.NewDriverFromBackend(cfg.RuntimeBackend, cfg.K8sNamespace)
 	runner := runtime.NewRunnerWithDriver(driver)
 	deploymentService := service.NewDeploymentService(deps.DeploymentRepo, deps.JobRepo, runner)
+	logs.Infof("main", "runtime driver ready backend=%s namespace=%s", cfg.RuntimeBackend, cfg.K8sNamespace)
 
 	workerCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -71,13 +81,13 @@ func main() {
 
 		// If control-plane acts as worker, start embedded worker to execute jobs
 		if cfg.ControlPlaneAsWorker {
-			worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA, cfg.ControlPlaneWorkerID)
+			worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, deps.WorkerRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA, cfg.ControlPlaneWorkerID, true)
 			go worker.Start(workerCtx)
 			logs.Infof("main", "embedded worker started for control-plane (worker_id=%s)", cfg.ControlPlaneWorkerID)
 		}
 	} else {
 		// Single-worker mode: start embedded worker
-		worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA, cfg.ControlPlaneWorkerID)
+		worker := service.NewDeploymentWorker(deps.DeploymentRepo, deps.JobRepo, nil, runner, cfg.WorkerPollInterval, cfg.EnableCPUHPA, cfg.ControlPlaneWorkerID, false)
 		go worker.Start(workerCtx)
 		logs.Infof("main", "single-worker mode: embedded worker started")
 	}
@@ -112,6 +122,7 @@ func main() {
 	logs.Infof("main", "starting router require_auth=%t has_database=%t analytics=%t details_service=%t",
 		cfg.RequireAuth, deps.HasDatabase, analyticsRepo != nil, detailsService != nil)
 	router := httpapi.NewRouter(cfg, deploymentService, detailsService, userRepo, analyticsRepo, deps.WorkerRepo, deps.JobRepo, deps.DeploymentRepo)
+	logs.Infof("main", "router initialized")
 
 	if err := router.Run("0.0.0.0:8080"); err != nil {
 		log.Fatalf("server exited: %v", err)

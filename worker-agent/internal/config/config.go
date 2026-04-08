@@ -15,15 +15,14 @@ type Config struct {
 }
 
 type WorkerConfig struct {
-	ID              string `yaml:"id"`
-	Name            string `yaml:"name"`
-	TailscaleIP     string `yaml:"tailscale_ip"`
-	MaxConcurrentJobs int  `yaml:"max_concurrent_jobs"`
+	ID                string `yaml:"id"`
+	Name              string `yaml:"name"`
+	TailscaleIP       string `yaml:"tailscale_ip"`
+	MaxConcurrentJobs int    `yaml:"max_concurrent_jobs"`
 }
 
 type ControlPlaneConfig struct {
-	URL          string `yaml:"url"`
-	SharedSecret string `yaml:"shared_secret"`
+	URL string `yaml:"url"`
 }
 
 type RuntimeConfig struct {

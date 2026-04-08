@@ -14,21 +14,22 @@ type WhoAmIResponse struct {
 
 // DeployResponse represents a successful deployment creation response
 type DeployResponse struct {
-	Message               string  `json:"message" example:"deployment queued"`
-	DeploymentID          string  `json:"deployment_id" example:"dep-123456"`
-	Status                string  `json:"status" example:"pending"`
-	Repo                  string  `json:"repo" example:"https://github.com/user/repo"`
-	Subdomain             string  `json:"subdomain" example:"myapp"`
-	URL                   string  `json:"url" example:"https://myapp.keshavstack.tech"`
-	Port                  int     `json:"port" example:"3000"`
-	Package               string  `json:"package" example:"small"`
-	CPUCores              float64 `json:"cpu_cores" example:"0.5"`
-	MemoryMB              int     `json:"memory_mb" example:"512"`
-	ScalingMode           string  `json:"scaling_mode" example:"horizontal"`
-	MinReplicas           int     `json:"min_replicas" example:"1"`
-	MaxReplicas           int     `json:"max_replicas" example:"3"`
-	CPUTargetUtilization  int     `json:"cpu_target_utilization" example:"70"`
-	AutoscalingEnabled    bool    `json:"autoscaling_enabled" example:"true"`
+	Message                 string  `json:"message" example:"deployment queued"`
+	DeploymentID            string  `json:"deployment_id" example:"dep-123456"`
+	Status                  string  `json:"status" example:"pending"`
+	Repo                    string  `json:"repo" example:"https://github.com/user/repo"`
+	Subdomain               string  `json:"subdomain" example:"myapp"`
+	URL                     string  `json:"url" example:"https://myapp.keshavstack.tech"`
+	Port                    int     `json:"port" example:"3000"`
+	Package                 string  `json:"package" example:"small"`
+	CPUCores                float64 `json:"cpu_cores" example:"0.5"`
+	MemoryMB                int     `json:"memory_mb" example:"512"`
+	ScalingMode             string  `json:"scaling_mode" example:"horizontal"`
+	MinReplicas             int     `json:"min_replicas" example:"1"`
+	MaxReplicas             int     `json:"max_replicas" example:"3"`
+	CPUTargetUtilization    int     `json:"cpu_target_utilization" example:"70"`
+	MemoryTargetUtilization int     `json:"memory_target_utilization" example:"75"`
+	AutoscalingEnabled      bool    `json:"autoscaling_enabled" example:"true"`
 }
 
 // DeploymentListResponse represents the list of deployments
