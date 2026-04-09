@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -161,6 +163,12 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 			n := rec
 			n.Status = "running"
 			n.OwnerWorkerID = workerID
+			if strings.TrimSpace(n.Container) == "" {
+				n.Container = "app-" + req.DeploymentID
+			}
+			if strings.TrimSpace(n.URL) == "" {
+				n.URL = buildWorkerDeploymentURL(n.Subdomain)
+			}
 			n.Error = ""
 			n.FinishedAt = nil
 			n.BuildLogs = n.BuildLogs + "\n=== worker ===\nremote worker reported job complete\n"
@@ -209,6 +217,12 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 			n := rec
 			n.Status = "failed"
 			n.OwnerWorkerID = workerID
+			if strings.TrimSpace(n.Container) == "" {
+				n.Container = "app-" + req.DeploymentID
+			}
+			if strings.TrimSpace(n.URL) == "" {
+				n.URL = buildWorkerDeploymentURL(n.Subdomain)
+			}
 			n.Error = req.Error
 			n.FinishedAt = &finishedAt
 			n.BuildLogs = n.BuildLogs + "\n=== worker error ===\n" + req.Error + "\n"
@@ -241,4 +255,13 @@ func (h *WorkerHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"workers": workers})
+}
+
+func buildWorkerDeploymentURL(subdomain string) string {
+	baseDomain := strings.Trim(strings.ToLower(strings.TrimSpace(os.Getenv("APP_BASE_DOMAIN"))), ".")
+	if baseDomain == "" {
+		baseDomain = "keshavstack.tech"
+	}
+
+	return "https://" + subdomain + "." + baseDomain
 }

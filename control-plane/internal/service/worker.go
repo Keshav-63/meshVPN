@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -101,17 +102,59 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 	rec.BuildLogs = "=== worker ===\njob claimed, deployment started\n"
 	w.repo.Update(rec)
 
-	result, buildLogs, deployErr := w.runner.DeployRepo(job.Repo, job.DeploymentID, job.Subdomain, job.Port, job.Env, job.BuildArgs, job.CPUCores, job.MemoryMB)
+	var liveLogsMu sync.Mutex
+	liveBuildLogs := rec.BuildLogs
+	lastPersistedLen := len(liveBuildLogs)
+	lastPersistAt := time.Now()
+
+	persistLiveLogs := func(force bool) {
+		liveLogsMu.Lock()
+		currentLogs := liveBuildLogs
+		shouldPersist := force || len(currentLogs)-lastPersistedLen >= 2048 || time.Since(lastPersistAt) >= time.Second
+		if !shouldPersist {
+			liveLogsMu.Unlock()
+			return
+		}
+		lastPersistedLen = len(currentLogs)
+		lastPersistAt = time.Now()
+		liveLogsMu.Unlock()
+
+		n := rec
+		n.Status = "deploying"
+		n.OwnerWorkerID = w.workerID
+		n.BuildLogs = currentLogs
+		w.repo.Update(n)
+	}
+
+	appendLiveLog := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+
+		liveLogsMu.Lock()
+		liveBuildLogs += chunk
+		liveLogsMu.Unlock()
+
+		persistLiveLogs(false)
+	}
+
+	result, buildLogs, deployErr := w.runner.DeployRepoWithUpdates(job.Repo, job.DeploymentID, job.Subdomain, job.Port, job.Env, job.BuildArgs, job.CPUCores, job.MemoryMB, appendLiveLog)
+	persistLiveLogs(true)
 	if deployErr != nil {
 		finalStatus = "failed"
 		if strings.TrimSpace(buildLogs) == "" {
-			buildLogs = rec.BuildLogs + "\n=== error ===\n" + deployErr.Error() + "\n"
+			liveLogsMu.Lock()
+			capturedLogs := liveBuildLogs
+			liveLogsMu.Unlock()
+			buildLogs = capturedLogs + "\n=== error ===\n" + deployErr.Error() + "\n"
 		}
 		finished := time.Now().UTC()
 		w.repo.Update(domain.DeploymentRecord{
 			DeploymentID:  rec.DeploymentID,
 			OwnerWorkerID: w.workerID,
 			RequestedBy:   rec.RequestedBy,
+			UserID:        rec.UserID,
+			Package:       rec.Package,
 			Repo:          rec.Repo,
 			Subdomain:     rec.Subdomain,
 			Port:          rec.Port,
@@ -139,7 +182,10 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 
 	finished := time.Now().UTC()
 	if strings.TrimSpace(buildLogs) == "" {
-		buildLogs = rec.BuildLogs + "\n=== worker ===\ndeployment completed without runtime logs\n"
+		liveLogsMu.Lock()
+		capturedLogs := liveBuildLogs
+		liveLogsMu.Unlock()
+		buildLogs = capturedLogs + "\n=== worker ===\ndeployment completed without runtime logs\n"
 	}
 	hpaBuildLogs := buildLogs
 	if w.enableCPUHPA && rec.ScalingMode == ScalingModeHorizontal {
@@ -159,6 +205,8 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 		DeploymentID:  result.DeploymentID,
 		OwnerWorkerID: w.workerID,
 		RequestedBy:   rec.RequestedBy,
+		UserID:        rec.UserID,
+		Package:       rec.Package,
 		Repo:          result.Repo,
 		Subdomain:     result.Subdomain,
 		Port:          result.Port,

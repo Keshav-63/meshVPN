@@ -28,30 +28,38 @@ func NewKubernetesDriver(namespace string) DeploymentDriver {
 }
 
 func (d *KubernetesDriver) DeployRepo(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int) (DeploymentResult, string, error) {
+	return d.deployRepo(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB, nil)
+}
+
+func (d *KubernetesDriver) DeployRepoWithUpdates(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int, onUpdate BuildLogUpdateFunc) (DeploymentResult, string, error) {
+	return d.deployRepo(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB, onUpdate)
+}
+
+func (d *KubernetesDriver) deployRepo(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int, onUpdate BuildLogUpdateFunc) (DeploymentResult, string, error) {
 	var logs strings.Builder
 	buildlogs.Infof("runtime-k8s", "deploy start deployment_id=%s repo=%s subdomain=%s port=%d", id, repo, subdomain, port)
 
-	buildlogs.AppendSection(&logs, "clone", fmt.Sprintf("repo=%s", repo))
+	emitBuildSection(&logs, onUpdate, "clone", fmt.Sprintf("repo=%s", repo))
 	appPath, cloneOutput, err := cloneRepo(repo, id)
-	buildlogs.AppendSection(&logs, "clone output", cloneOutput)
+	emitBuildSection(&logs, onUpdate, "clone output", cloneOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), err
 	}
 
 	if err := ensureDockerfile(appPath); err != nil {
-		buildlogs.AppendSection(&logs, "dockerfile check", err.Error())
+		emitBuildSection(&logs, onUpdate, "dockerfile check", err.Error())
 		return DeploymentResult{}, logs.String(), err
 	}
 
-	image, imageErr := d.buildAndPushImage(id, appPath, buildArgs)
+	image, imageErr := d.buildAndPushImageWithStream(id, appPath, buildArgs, onUpdate)
 	if imageErr != nil {
-		buildlogs.AppendSection(&logs, "image build/push", imageErr.Error())
+		emitBuildSection(&logs, onUpdate, "image build/push", imageErr.Error())
 		return DeploymentResult{}, logs.String(), imageErr
 	}
-	buildlogs.AppendSection(&logs, "image", image)
+	emitBuildSection(&logs, onUpdate, "image", image)
 
 	if err := d.ensureNamespace(); err != nil {
-		buildlogs.AppendSection(&logs, "namespace", err.Error())
+		emitBuildSection(&logs, onUpdate, "namespace", err.Error())
 		return DeploymentResult{}, logs.String(), err
 	}
 
@@ -62,14 +70,14 @@ func (d *KubernetesDriver) DeployRepo(repo string, id string, subdomain string, 
 	host := deploymentHost(normalizedSubdomain)
 
 	manifest := d.renderWorkloadManifest(deployment, service, ingress, host, image, port, runtimeEnv, cpuCores, memoryMB)
-	applyOutput, err := runCommandWithInput("", manifest, d.kubectl, "-n", d.namespace, "apply", "-f", "-")
-	buildlogs.AppendSection(&logs, "kubectl apply", applyOutput)
+	applyOutput, err := runCommandWithInputStream("", manifest, onUpdate, d.kubectl, "-n", d.namespace, "apply", "-f", "-")
+	emitBuildSection(&logs, onUpdate, "kubectl apply", applyOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), fmt.Errorf("apply k8s manifests: %w", err)
 	}
 
-	rolloutOutput, err := runCommand("", d.kubectl, "-n", d.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=600s")
-	buildlogs.AppendSection(&logs, "rollout", rolloutOutput)
+	rolloutOutput, err := runCommandStream("", onUpdate, d.kubectl, "-n", d.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=600s")
+	emitBuildSection(&logs, onUpdate, "rollout", rolloutOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), fmt.Errorf("wait deployment rollout: %w", err)
 	}
@@ -212,6 +220,10 @@ func ingressMiddlewareAnnotation() string {
 }
 
 func (d *KubernetesDriver) buildAndPushImage(id string, appPath string, buildArgs map[string]string) (string, error) {
+	return d.buildAndPushImageWithStream(id, appPath, buildArgs, nil)
+}
+
+func (d *KubernetesDriver) buildAndPushImageWithStream(id string, appPath string, buildArgs map[string]string, onUpdate BuildLogUpdateFunc) (string, error) {
 	prefix := strings.TrimSpace(os.Getenv("K8S_IMAGE_PREFIX"))
 	if prefix == "" {
 		return "", fmt.Errorf("K8S_IMAGE_PREFIX is required for kubernetes backend")
@@ -223,11 +235,11 @@ func (d *KubernetesDriver) buildAndPushImage(id string, appPath string, buildArg
 	}
 
 	image := fmt.Sprintf("%s/laptopcloud-%s:%s", prefix, id, id)
-	if _, err := buildImage(image, appPath, buildArgs); err != nil {
+	if _, err := buildImageWithStream(image, appPath, buildArgs, onUpdate); err != nil {
 		return "", err
 	}
 
-	if _, err := runCommand("", "docker", "push", image); err != nil {
+	if _, err := runCommandStream("", onUpdate, "docker", "push", image); err != nil {
 		return "", fmt.Errorf("push image: %w", err)
 	}
 

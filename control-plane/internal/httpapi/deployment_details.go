@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
@@ -119,15 +120,22 @@ func (h *DeploymentDetailsHandler) GetDeploymentDetails(c *gin.Context) {
 // @Failure      500  {object}  ErrorResponse
 // @Router       /deployments [get]
 func (h *DeploymentDetailsHandler) GetDeploymentsList(c *gin.Context) {
+	authSub := strings.TrimSpace(c.GetString("auth.sub"))
+
 	// Get user from context (set by auth middleware)
 	user, userExists := c.Get("auth.user")
 
 	var deployments []domain.DeploymentRecord
 
 	if !userExists {
-		// Fallback for when auth is disabled (dev mode)
-		logs.Debugf("http", "list deployments requested_by=%s (no user context)", c.GetString("auth.sub"))
-		deployments = h.deploymentService.ListDeployments()
+		if authSub != "" {
+			logs.Debugf("http", "list deployments user_id=%s (fallback from auth.sub)", authSub)
+			deployments = h.deploymentService.ListDeploymentsByUser(authSub)
+		} else {
+			// Fallback for when auth is disabled (dev mode)
+			logs.Debugf("http", "list deployments requested_by=%s (no user context)", c.GetString("auth.sub"))
+			deployments = h.deploymentService.ListDeployments()
+		}
 	} else {
 		actualUser := user.(domain.User)
 		logs.Debugf("http", "list deployments user_id=%s", actualUser.UserID)

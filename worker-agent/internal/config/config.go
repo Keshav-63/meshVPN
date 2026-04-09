@@ -26,11 +26,12 @@ type ControlPlaneConfig struct {
 }
 
 type RuntimeConfig struct {
-	Type        string `yaml:"type"` // kubernetes, docker
-	Kubeconfig  string `yaml:"kubeconfig"`
-	Namespace   string `yaml:"namespace"`
-	KubectlBin  string `yaml:"kubectl_bin"`
-	ImagePrefix string `yaml:"image_prefix"` // e.g., ghcr.io/keshav-63
+	Type          string `yaml:"type"` // kubernetes, docker
+	Kubeconfig    string `yaml:"kubeconfig"`
+	Namespace     string `yaml:"namespace"`
+	KubectlBin    string `yaml:"kubectl_bin"`
+	ImagePrefix   string `yaml:"image_prefix"`    // e.g., ghcr.io/keshav-63
+	AppBaseDomain string `yaml:"app_base_domain"` // e.g., keshavstack.tech
 }
 
 type Capabilities struct {
@@ -65,6 +66,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Runtime.ImagePrefix == "" {
 		return nil, fmt.Errorf("runtime.image_prefix is required (e.g., ghcr.io/your-username)")
+	}
+	if cfg.Runtime.AppBaseDomain == "" {
+		cfg.Runtime.AppBaseDomain = "keshavstack.tech"
 	}
 
 	return &cfg, nil

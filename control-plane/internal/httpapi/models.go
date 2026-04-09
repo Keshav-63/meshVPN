@@ -60,6 +60,9 @@ type AppLogsResponse struct {
 	DeploymentID    string `json:"deployment_id" example:"dep-123456"`
 	Container       string `json:"container" example:"myapp-container"`
 	Tail            int    `json:"tail" example:"200"`
+	Cursor          int    `json:"cursor" example:"1200"`
+	NextCursor      int    `json:"next_cursor" example:"1680"`
+	Delta           bool   `json:"delta" example:"true"`
 	ApplicationLogs string `json:"application_logs" example:"Server listening on port 3000..."`
 }
 

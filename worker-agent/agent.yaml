@@ -36,6 +36,10 @@ runtime:
   # Path to kubectl binary (usually just "kubectl" if in PATH)
   kubectl_bin: kubectl
 
+  # Base domain used for generated ingress hosts on this worker
+  # Keep this aligned with control-plane APP_BASE_DOMAIN
+  app_base_domain: keshavstack.tech
+
   # Docker image registry prefix (REQUIRED)
   # Use your GitHub username or organization
   # Example: ghcr.io/keshav-63

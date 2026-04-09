@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -47,6 +48,9 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 		user := userVal.(domain.User)
 		userID = user.UserID
 	}
+	if userID == "" {
+		userID = strings.TrimSpace(c.GetString("auth.sub"))
+	}
 
 	deployments := h.deploymentService.ListDeployments()
 	if userID != "" {
@@ -60,6 +64,7 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 
 	var totalRequests int64
 	var lastHourRequests int64
+	var last24hRequests int64
 	var totalBandwidthSent int64
 	var totalBandwidthRecv int64
 	var currentPods int
@@ -83,6 +88,7 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 
 		totalRequests += metrics.RequestCountTotal
 		lastHourRequests += metrics.RequestCount1h
+		last24hRequests += metrics.RequestCount24h
 		totalBandwidthSent += metrics.BandwidthSentBytes
 		totalBandwidthRecv += metrics.BandwidthRecvBytes
 		currentPods += metrics.CurrentPods
@@ -93,10 +99,11 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 			"subdomain":     dep.Subdomain,
 			"url":           dep.URL,
 			"status":        dep.Status,
-			"package":       dep.Package,
+			"package":       normalizePackage(dep.Package),
 			"metrics": gin.H{
 				"requests_total":       metrics.RequestCountTotal,
 				"requests_last_hour":   metrics.RequestCount1h,
+				"requests_last_24h":    metrics.RequestCount24h,
 				"bandwidth_sent_bytes": metrics.BandwidthSentBytes,
 				"bandwidth_recv_bytes": metrics.BandwidthRecvBytes,
 				"current_pods":         metrics.CurrentPods,
@@ -120,6 +127,7 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 			"deployments_queued":   queued,
 			"requests_total":       totalRequests,
 			"requests_last_hour":   lastHourRequests,
+			"requests_last_24h":    last24hRequests,
 			"bandwidth_sent_bytes": totalBandwidthSent,
 			"bandwidth_recv_bytes": totalBandwidthRecv,
 			"pods_current":         currentPods,
@@ -127,6 +135,15 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 		},
 		"deployments": items,
 	})
+}
+
+func normalizePackage(pkg string) string {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" {
+		return "small"
+	}
+
+	return pkg
 }
 
 // GetAnalytics returns current metrics for a deployment (GET /deployments/:id/analytics)

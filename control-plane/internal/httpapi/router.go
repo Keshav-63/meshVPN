@@ -111,7 +111,9 @@ func NewRouter(cfg config.ControlPlaneConfig, deploymentService *service.Deploym
 	}
 
 	protected.GET("/deployments/:id/build-logs", handlers.GetBuildLogs)
+	protected.GET("/deployments/:id/build-logs/stream", handlers.StreamBuildLogs)
 	protected.GET("/deployments/:id/app-logs", handlers.GetAppLogs)
+	protected.GET("/deployments/:id/app-logs/stream", handlers.StreamAppLogs)
 
 	// Analytics endpoints (if analytics repository is available)
 	if analyticsHandler != nil {
