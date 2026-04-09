@@ -16,11 +16,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if running on control-plane
-if [ -f "../control-plane/cmd/control-plane/main.go" ]; then
-    echo -e "${RED}ERROR: This script should NOT be run on the control-plane machine!${NC}"
-    echo "Please run this on a separate worker machine."
-    exit 1
-fi
+# if [ -f "../control-plane/cmd/control-plane/main.go" ]; then
+#     echo -e "${RED}ERROR: This script should NOT be run on the control-plane machine!${NC}"
+#     echo "Please run this on a separate worker machine."
+#     exit 1
+# fi
 
 echo "This script will:"
 echo "  1. Check prerequisites (Tailscale, Docker, kubectl, K3D)"
@@ -178,6 +178,25 @@ else
     echo -e "${GREEN}✓ Control-plane reachable${NC}"
 fi
 
+# Get shared secret
+echo ""
+echo "Enter the worker shared secret (from control-plane .env):"
+echo "(Default: meshvpn-worker-secret-change-in-production)"
+read -p "Shared secret: " SHARED_SECRET
+
+if [ -z "$SHARED_SECRET" ]; then
+    SHARED_SECRET="meshvpn-worker-secret-change-in-production"
+fi
+
+# Get container image prefix
+echo ""
+echo "Enter the container image prefix (e.g., ghcr.io/keshav-63 or your-registry):"
+read -p "Image prefix: " IMAGE_PREFIX
+
+if [ -z "$IMAGE_PREFIX" ]; then
+    IMAGE_PREFIX="ghcr.io/meshvpn"
+fi
+
 # Update agent.yaml
 cat > agent.yaml <<EOF
 # Worker Agent Configuration
@@ -197,6 +216,7 @@ runtime:
   kubeconfig: $HOME/.kube/config
   namespace: worker-apps
   kubectl_bin: kubectl
+  image_prefix: $IMAGE_PREFIX
 
 capabilities:
   memory_gb: 16

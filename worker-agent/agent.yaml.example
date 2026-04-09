@@ -14,7 +14,7 @@ runtime:
   kubectl_bin: kubectl
   app_base_domain: keshavstack.tech
   image_prefix: ghcr.io/your-github-username  # REQUIRED: Replace with your GitHub username
-
+ 
 capabilities:
   memory_gb: 16
   cpu_cores: 8
