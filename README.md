@@ -1,5 +1,6 @@
 # MeshVPN Self-Hosting Platform
 
+
 **Current Architecture**: Windows → WSL2 (Debian) → K3D → Cloudflare Tunnel
 
 A complete self-hosting platform that turns your laptop into a deployment engine with Kubernetes orchestration:
