@@ -1,5 +1,6 @@
 # Fresh Installation Guide - Start from Zero
 
+
 Complete guide to clean up everything and start fresh with minimal resource consumption.
 
 ## Table of Contents
