@@ -4,6 +4,7 @@ Step-by-step guide to register a remote worker with the control-plane.
 
 ---
 
+
 ## 🎯 Overview
 
 **What you need:**
