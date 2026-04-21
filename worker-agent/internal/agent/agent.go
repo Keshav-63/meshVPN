@@ -17,11 +17,11 @@ import (
 )
 
 type Agent struct {
-	cfg          *config.Config
-	executor     *executor.JobExecutor
-	client       *http.Client
-	activeJobs   int
-	podsManaged  int
+	cfg         *config.Config
+	executor    *executor.JobExecutor
+	client      *http.Client
+	activeJobs  int
+	podsManaged int
 }
 
 func New(cfg *config.Config) *Agent {
@@ -177,6 +177,8 @@ func (a *Agent) claimAndExecuteJob(ctx context.Context) {
 		return
 	}
 
+	deploymentID, _ := job["deployment_id"].(string)
+
 	log.Printf("Claimed job: %s", jobID)
 
 	// Track job execution
@@ -191,7 +193,7 @@ func (a *Agent) claimAndExecuteJob(ctx context.Context) {
 		duration := time.Since(startTime).Seconds()
 		metrics.RecordJobCompletion("failed", duration)
 		metrics.SetActiveJobs(a.activeJobs)
-		a.reportJobFailed(jobID, err.Error())
+		a.reportJobFailed(jobID, deploymentID, err.Error())
 		return
 	}
 
@@ -200,11 +202,11 @@ func (a *Agent) claimAndExecuteJob(ctx context.Context) {
 	duration := time.Since(startTime).Seconds()
 	metrics.RecordJobCompletion("success", duration)
 	metrics.SetActiveJobs(a.activeJobs)
-	a.reportJobComplete(jobID)
+	a.reportJobComplete(jobID, deploymentID)
 }
 
-func (a *Agent) reportJobComplete(jobID string) {
-	payload := map[string]string{"job_id": jobID}
+func (a *Agent) reportJobComplete(jobID, deploymentID string) {
+	payload := map[string]string{"job_id": jobID, "deployment_id": deploymentID}
 	data, _ := json.Marshal(payload)
 	url := fmt.Sprintf("%s/api/workers/%s/job-complete", a.cfg.ControlPlane.URL, a.cfg.Worker.ID)
 
@@ -216,10 +218,11 @@ func (a *Agent) reportJobComplete(jobID string) {
 	defer resp.Body.Close()
 }
 
-func (a *Agent) reportJobFailed(jobID, errorMsg string) {
+func (a *Agent) reportJobFailed(jobID, deploymentID, errorMsg string) {
 	payload := map[string]string{
-		"job_id": jobID,
-		"error":  errorMsg,
+		"job_id":        jobID,
+		"deployment_id": deploymentID,
+		"error":         errorMsg,
 	}
 	data, _ := json.Marshal(payload)
 	url := fmt.Sprintf("%s/api/workers/%s/job-failed", a.cfg.ControlPlane.URL, a.cfg.Worker.ID)

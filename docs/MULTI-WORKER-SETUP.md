@@ -107,9 +107,6 @@ CONTROL_PLANE_MAX_JOBS=2
 # Job placement strategy
 JOB_PLACEMENT_STRATEGY=smart
 
-# Worker authentication
-WORKER_SHARED_SECRET=my-secret-token-12345
-
 # Database (required for multi-worker)
 DATABASE_URL=postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require
 
@@ -244,7 +241,6 @@ worker:
 
 control_plane:
   url: http://100.107.233.70:8080  # Control-plane Tailscale IP
-  shared_secret: "my-secret-token-12345"  # Must match .env
 
 runtime:
   type: kubernetes
@@ -345,10 +341,12 @@ curl -X POST http://localhost:8080/deploy \
   "package": "small",
   "cpu_cores": 0.5,
   "memory_mb": 512,
-  "scaling_mode": "none",
+  "scaling_mode": "horizontal",
   "min_replicas": 1,
-  "max_replicas": 1,
-  "autoscaling_enabled": false
+  "max_replicas": 3,
+  "cpu_target_utilization": 70,
+  "memory_target_utilization": 75,
+  "autoscaling_enabled": true
 }
 ```
 

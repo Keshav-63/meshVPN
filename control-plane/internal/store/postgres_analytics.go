@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -136,6 +137,15 @@ DO UPDATE SET
 
 // RecordRequest logs an individual request for percentile calculation
 func (r *PostgresAnalyticsRepository) RecordRequest(req domain.DeploymentRequest) error {
+	deploymentID, err := r.resolveDeploymentID(req.DeploymentID)
+	if err != nil {
+		return fmt.Errorf("resolve deployment id: %w", err)
+	}
+	if deploymentID == "" {
+		// Unknown deployment identifier. Keep telemetry fire-and-forget and skip.
+		return nil
+	}
+
 	const stmt = `
 INSERT INTO deployment_requests (
 	deployment_id, timestamp, status_code, latency_ms, bytes_sent, bytes_received, path
@@ -143,8 +153,8 @@ INSERT INTO deployment_requests (
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
-	_, err := r.db.Exec(stmt,
-		req.DeploymentID,
+	_, err = r.db.Exec(stmt,
+		deploymentID,
 		req.Timestamp,
 		req.StatusCode,
 		req.LatencyMs,
@@ -158,6 +168,103 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 	}
 
 	return nil
+}
+
+// RecordRequestBatch inserts many resolved deployment requests in a single SQL statement.
+// Requests with empty deployment IDs are ignored.
+func (r *PostgresAnalyticsRepository) RecordRequestBatch(requests []domain.DeploymentRequest) error {
+	if len(requests) == 0 {
+		return nil
+	}
+
+	const columnsPerRow = 7
+
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString(`
+INSERT INTO deployment_requests (
+	deployment_id, timestamp, status_code, latency_ms, bytes_sent, bytes_received, path
+)
+VALUES
+`)
+
+	args := make([]interface{}, 0, len(requests)*columnsPerRow)
+	paramIdx := 1
+	rowsAdded := 0
+
+	for _, req := range requests {
+		deploymentID := strings.TrimSpace(req.DeploymentID)
+		if deploymentID == "" {
+			continue
+		}
+
+		if rowsAdded > 0 {
+			queryBuilder.WriteString(",\n")
+		}
+
+		queryBuilder.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			paramIdx,
+			paramIdx+1,
+			paramIdx+2,
+			paramIdx+3,
+			paramIdx+4,
+			paramIdx+5,
+			paramIdx+6,
+		))
+
+		args = append(args,
+			deploymentID,
+			req.Timestamp,
+			req.StatusCode,
+			req.LatencyMs,
+			req.BytesSent,
+			req.BytesReceived,
+			req.Path,
+		)
+
+		paramIdx += columnsPerRow
+		rowsAdded++
+	}
+
+	if rowsAdded == 0 {
+		return nil
+	}
+
+	if _, err := r.db.Exec(queryBuilder.String(), args...); err != nil {
+		return fmt.Errorf("record request batch: %w", err)
+	}
+
+	return nil
+}
+
+func (r *PostgresAnalyticsRepository) resolveDeploymentID(identifier string) (string, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", nil
+	}
+
+	var deploymentID string
+
+	// First, prefer exact deployment_id matches (supports short IDs like dd33c835).
+	const byIDQuery = `SELECT deployment_id FROM deployments WHERE deployment_id = $1 LIMIT 1`
+	err := r.db.QueryRow(byIDQuery, identifier).Scan(&deploymentID)
+	if err == nil {
+		return deploymentID, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", fmt.Errorf("lookup by deployment_id: %w", err)
+	}
+
+	// Fallback: allow telemetry producers that still send subdomain values.
+	const bySubdomainQuery = `SELECT deployment_id FROM deployments WHERE subdomain = $1 LIMIT 1`
+	err = r.db.QueryRow(bySubdomainQuery, identifier).Scan(&deploymentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup by subdomain: %w", err)
+	}
+
+	return deploymentID, nil
 }
 
 // CalculatePercentiles calculates p50, p90, p99 latencies from recent requests
@@ -289,6 +396,86 @@ ORDER BY deployment_id
 	}
 
 	return deploymentIDs, nil
+}
+
+// GetDeploymentSummaries retrieves summary metrics for multiple deployments efficiently
+func (r *PostgresAnalyticsRepository) GetDeploymentSummaries(deploymentIDs []string) (map[string]domain.DeploymentMetrics, error) {
+	if len(deploymentIDs) == 0 {
+		return make(map[string]domain.DeploymentMetrics), nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(deploymentIDs))
+	args := make([]interface{}, len(deploymentIDs))
+	for i, id := range deploymentIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+SELECT deployment_id, request_count_total, request_count_1h, request_count_24h,
+       requests_per_second, bandwidth_sent_bytes, bandwidth_received_bytes,
+       latency_p50_ms, latency_p90_ms, latency_p99_ms,
+       current_pods, desired_pods, cpu_usage_percent, memory_usage_mb, last_updated
+FROM deployment_metrics
+WHERE deployment_id IN (%s)
+`, strings.Join(placeholders, ", "))
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query deployment summaries: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]domain.DeploymentMetrics)
+	for rows.Next() {
+		var metrics domain.DeploymentMetrics
+		var latencyP50, latencyP90, latencyP99 sql.NullFloat64
+		var cpuUsage, memoryUsage sql.NullFloat64
+
+		err := rows.Scan(
+			&metrics.DeploymentID,
+			&metrics.RequestCountTotal,
+			&metrics.RequestCount1h,
+			&metrics.RequestCount24h,
+			&metrics.RequestsPerSecond,
+			&metrics.BandwidthSentBytes,
+			&metrics.BandwidthRecvBytes,
+			&latencyP50,
+			&latencyP90,
+			&latencyP99,
+			&metrics.CurrentPods,
+			&metrics.DesiredPods,
+			&cpuUsage,
+			&memoryUsage,
+			&metrics.LastUpdated,
+		)
+
+		if err != nil {
+			logs.Errorf("analytics", "failed to scan metrics row: %v", err)
+			continue
+		}
+
+		if latencyP50.Valid {
+			metrics.LatencyP50Ms = latencyP50.Float64
+		}
+		if latencyP90.Valid {
+			metrics.LatencyP90Ms = latencyP90.Float64
+		}
+		if latencyP99.Valid {
+			metrics.LatencyP99Ms = latencyP99.Float64
+		}
+		if cpuUsage.Valid {
+			metrics.CPUUsagePercent = cpuUsage.Float64
+		}
+		if memoryUsage.Valid {
+			metrics.MemoryUsageMB = memoryUsage.Float64
+		}
+
+		result[metrics.DeploymentID] = metrics
+	}
+
+	return result, nil
 }
 
 // Helper function to convert float64 to sql.NullFloat64

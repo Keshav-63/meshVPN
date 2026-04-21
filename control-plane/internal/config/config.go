@@ -14,11 +14,9 @@ type ControlPlaneConfig struct {
 	SupabaseJWTSecret  string
 	RequireAuth        bool
 	WorkerPollInterval time.Duration
-	WorkerBatchSize    int
 	RuntimeBackend     string
 	EnableCPUHPA       bool
 	K8sNamespace       string
-	K8sConfigPath      string
 	FrontendURL        string
 
 	// Multi-worker configuration
@@ -27,7 +25,6 @@ type ControlPlaneConfig struct {
 	ControlPlaneWorkerID   string
 	ControlPlaneMaxJobs    int
 	JobPlacementStrategy   string
-	WorkerSharedSecret     string
 	WorkerHeartbeatTimeout time.Duration
 }
 
@@ -48,13 +45,6 @@ func Load() ControlPlaneConfig {
 	if raw := os.Getenv("WORKER_POLL_INTERVAL"); raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil {
 			pollInterval = d
-		}
-	}
-
-	batchSize := 3
-	if raw := os.Getenv("WORKER_BATCH_SIZE"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			batchSize = parsed
 		}
 	}
 
@@ -126,11 +116,9 @@ func Load() ControlPlaneConfig {
 		SupabaseJWTSecret:  strings.TrimSpace(os.Getenv("SUPABASE_JWT_SECRET")),
 		RequireAuth:        requireAuth,
 		WorkerPollInterval: pollInterval,
-		WorkerBatchSize:    batchSize,
 		RuntimeBackend:     runtimeBackend,
 		EnableCPUHPA:       enableCPUHPA,
 		K8sNamespace:       k8sNamespace,
-		K8sConfigPath:      os.Getenv("K8S_CONFIG_PATH"),
 		FrontendURL:        frontendURL,
 
 		// Multi-worker fields
@@ -139,7 +127,6 @@ func Load() ControlPlaneConfig {
 		ControlPlaneWorkerID:   controlPlaneWorkerID,
 		ControlPlaneMaxJobs:    controlPlaneMaxJobs,
 		JobPlacementStrategy:   jobPlacementStrategy,
-		WorkerSharedSecret:     os.Getenv("WORKER_SHARED_SECRET"),
 		WorkerHeartbeatTimeout: workerHeartbeatTimeout,
 	}
 }

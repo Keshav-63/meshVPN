@@ -56,7 +56,7 @@ MeshVPN uses a 3-tier package system for resource allocation:
 - **Medium**: 1.0 CPU core, 1024 MB RAM, max 5 replicas
 - **Large**: 2.0 CPU cores, 2048 MB RAM, max 10 replicas
 
-**Autoscaling**: Enabled only for subscribers (non-subscribers run 1 fixed replica)
+**Autoscaling**: Enabled for all users (CPU + memory based HPA)
 
 See [PACKAGES.md](./PACKAGES.md) for detailed specifications.
 
@@ -162,7 +162,6 @@ REQUIRE_AUTH=true
 
 # Worker Settings
 WORKER_POLL_INTERVAL=2s
-WORKER_BATCH_SIZE=3
 
 # Runtime Backend
 RUNTIME_BACKEND=k3s

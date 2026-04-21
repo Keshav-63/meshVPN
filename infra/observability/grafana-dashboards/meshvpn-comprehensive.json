@@ -482,7 +482,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "platform_requests_total",
+          "expr": "sum(deployment_requests_total)",
           "refId": "A"
         }
       ],
@@ -797,7 +797,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(platform_requests_total[5m])",
+          "expr": "sum(rate(deployment_requests_total[$__rate_interval]))",
           "legendFormat": "Platform Request Rate",
           "refId": "A"
         },
@@ -806,7 +806,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(deployment_requests_total[5m]))",
+          "expr": "sum(rate(deployment_requests_total[$__rate_interval]))",
           "legendFormat": "All Deployments",
           "refId": "B"
         }

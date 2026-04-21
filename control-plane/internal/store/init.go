@@ -23,7 +23,7 @@ type Dependencies struct {
 
 func Initialize(cfg config.ControlPlaneConfig) (Dependencies, func(), error) {
 	if cfg.DatabaseURL == "" {
-		logs.Infof("store", "DATABASE_URL not set, using in-memory repositories")
+		logs.Infof("store", "DATABASE_URL not set, using in-memory repositories (deployments/jobs only)")
 		return Dependencies{
 			DeploymentRepo: NewInMemoryDeploymentRepository(),
 			JobRepo:        NewInMemoryJobRepository(),
@@ -46,6 +46,9 @@ func Initialize(cfg config.ControlPlaneConfig) (Dependencies, func(), error) {
 		return Dependencies{}, nil, fmt.Errorf("ping postgres connection: %w", err)
 	}
 
+	logs.Infof("store", "postgres connection established max_open=%d max_idle=%d max_lifetime=%s",
+		15, 5, 15*time.Minute)
+
 	repo := NewPostgresDeploymentRepository(db)
 	if err := EnsureMigrations(db); err != nil {
 		_ = db.Close()
@@ -57,8 +60,11 @@ func Initialize(cfg config.ControlPlaneConfig) (Dependencies, func(), error) {
 	workerRepo := NewPostgresWorkerRepository(db)
 
 	cleanup := func() {
+		logs.Infof("store", "closing postgres connection")
 		_ = db.Close()
 	}
+
+	logs.Infof("store", "postgres repositories ready (deployments/jobs/users/analytics/workers)")
 
 	return Dependencies{
 		DeploymentRepo: repo,

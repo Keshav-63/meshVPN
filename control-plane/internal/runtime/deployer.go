@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,14 @@ func NewRunnerWithDriver(driver DeploymentDriver) *Runner {
 }
 
 func (r *Runner) DeployRepo(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int) (DeploymentResult, string, error) {
+	return r.driver.DeployRepo(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB)
+}
+
+func (r *Runner) DeployRepoWithUpdates(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int, onUpdate BuildLogUpdateFunc) (DeploymentResult, string, error) {
+	if streamingDriver, ok := r.driver.(StreamingDeploymentDriver); ok {
+		return streamingDriver.DeployRepoWithUpdates(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB, onUpdate)
+	}
+
 	return r.driver.DeployRepo(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB)
 }
 
@@ -221,6 +230,10 @@ func sortedMapKeys(values map[string]string) []string {
 }
 
 func runCommand(dir string, name string, args ...string) (string, error) {
+	return runCommandStream(dir, nil, name, args...)
+}
+
+func runCommandStream(dir string, onOutput BuildLogUpdateFunc, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	if filepath.Base(name) == "kubectl" {
@@ -231,8 +244,9 @@ func runCommand(dir string, name string, args ...string) (string, error) {
 	}
 
 	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	mw := io.MultiWriter(&output, buildLogWriter{onOutput: onOutput})
+	cmd.Stdout = mw
+	cmd.Stderr = mw
 
 	err := cmd.Run()
 	outputText := output.String()
@@ -248,6 +262,10 @@ func runCommand(dir string, name string, args ...string) (string, error) {
 }
 
 func runCommandWithInput(dir string, input string, name string, args ...string) (string, error) {
+	return runCommandWithInputStream(dir, input, nil, name, args...)
+}
+
+func runCommandWithInputStream(dir string, input string, onOutput BuildLogUpdateFunc, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	if filepath.Base(name) == "kubectl" {
@@ -262,8 +280,9 @@ func runCommandWithInput(dir string, input string, name string, args ...string) 
 	}
 
 	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	mw := io.MultiWriter(&output, buildLogWriter{onOutput: onOutput})
+	cmd.Stdout = mw
+	cmd.Stderr = mw
 
 	err := cmd.Run()
 	outputText := output.String()
@@ -276,4 +295,16 @@ func runCommandWithInput(dir string, input string, name string, args ...string) 
 	}
 
 	return outputText, nil
+}
+
+type buildLogWriter struct {
+	onOutput BuildLogUpdateFunc
+}
+
+func (w buildLogWriter) Write(p []byte) (int, error) {
+	if w.onOutput != nil && len(p) > 0 {
+		w.onOutput(string(p))
+	}
+
+	return len(p), nil
 }

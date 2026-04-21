@@ -16,11 +16,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if running on control-plane
-if [ -f "../control-plane/cmd/control-plane/main.go" ]; then
-    echo -e "${RED}ERROR: This script should NOT be run on the control-plane machine!${NC}"
-    echo "Please run this on a separate worker machine."
-    exit 1
-fi
+# if [ -f "../control-plane/cmd/control-plane/main.go" ]; then
+#     echo -e "${RED}ERROR: This script should NOT be run on the control-plane machine!${NC}"
+#     echo "Please run this on a separate worker machine."
+#     exit 1
+# fi
 
 echo "This script will:"
 echo "  1. Check prerequisites (Tailscale, Docker, kubectl, K3D)"
@@ -153,11 +153,11 @@ fi
 # Get control-plane IP
 echo ""
 echo "Enter the control-plane Tailscale IP address:"
-echo "(Default: 100.88.151.60)"
 read -p "Control-plane IP: " CONTROL_PLANE_IP
 
 if [ -z "$CONTROL_PLANE_IP" ]; then
-    CONTROL_PLANE_IP="100.88.151.60"
+    echo -e "${RED}Control-plane IP cannot be empty!${NC}"
+    exit 1
 fi
 
 # Test connection to control-plane
@@ -188,6 +188,15 @@ if [ -z "$SHARED_SECRET" ]; then
     SHARED_SECRET="meshvpn-worker-secret-change-in-production"
 fi
 
+# Get container image prefix
+echo ""
+echo "Enter the container image prefix (e.g., ghcr.io/keshav-63 or your-registry):"
+read -p "Image prefix: " IMAGE_PREFIX
+
+if [ -z "$IMAGE_PREFIX" ]; then
+    IMAGE_PREFIX="ghcr.io/meshvpn"
+fi
+
 # Update agent.yaml
 cat > agent.yaml <<EOF
 # Worker Agent Configuration
@@ -201,13 +210,13 @@ worker:
 
 control_plane:
   url: http://$CONTROL_PLANE_IP:8080
-  shared_secret: "$SHARED_SECRET"
 
 runtime:
   type: kubernetes
   kubeconfig: $HOME/.kube/config
   namespace: worker-apps
   kubectl_bin: kubectl
+  image_prefix: $IMAGE_PREFIX
 
 capabilities:
   memory_gb: 16
@@ -227,8 +236,10 @@ echo -e "${YELLOW}[6/6] Building worker agent...${NC}"
 if [ ! -f "go.mod" ]; then
     echo "Initializing Go module..."
     go mod init worker-agent
-    go mod tidy
 fi
+
+echo "Syncing Go module dependencies..."
+go mod tidy
 
 echo "Building worker agent binary..."
 go build -o worker-agent cmd/worker-agent/main.go

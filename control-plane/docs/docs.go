@@ -22,6 +22,114 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/telemetry/deployment-request": {
+            "post": {
+                "description": "Records metrics for a single HTTP request to a user deployment",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telemetry"
+                ],
+                "summary": "Record deployment HTTP request metrics",
+                "parameters": [
+                    {
+                        "description": "Request metrics",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.DeploymentRequestPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/telemetry/deployment-request/batch": {
+            "post": {
+                "description": "Records metrics for multiple HTTP requests to user deployments in a batch",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telemetry"
+                ],
+                "summary": "Record multiple deployment HTTP request metrics",
+                "parameters": [
+                    {
+                        "description": "Batch of request metrics",
+                        "name": "requests",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.BatchDeploymentRequestPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/auth/whoami": {
             "get": {
                 "security": [
@@ -41,13 +149,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.WhoAmIResponse"
+                            "$ref": "#/definitions/httpapi.WhoAmIResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     }
                 }
@@ -78,7 +186,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.DeployRequestPayload"
+                            "$ref": "#/definitions/httpapi.DeployRequestPayload"
                         }
                     }
                 ],
@@ -86,25 +194,25 @@ const docTemplate = `{
                     "202": {
                         "description": "Accepted",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.DeployResponse"
+                            "$ref": "#/definitions/httpapi.DeployResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     }
                 }
@@ -129,13 +237,194 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.DeploymentListResponse"
+                            "$ref": "#/definitions/httpapi.DeploymentListResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve complete deployment information including config, metrics, pods, and resources",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "Get comprehensive deployment details",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain.DeploymentDetails"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments/{id}/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get aggregated metrics for a specific deployment (backward compatible)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Get deployment analytics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deployment analytics with metrics",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments/{id}/analytics/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stream real-time metrics updates every 5 seconds via Server-Sent Events",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Stream live deployment metrics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "JWT token (SSE doesn't support headers)",
+                        "name": "token",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     }
                 }
@@ -176,31 +465,37 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.AppLogsResponse"
+                            "$ref": "#/definitions/httpapi.AppLogsResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     }
                 }
@@ -234,19 +529,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.BuildLogsResponse"
+                            "$ref": "#/definitions/httpapi.BuildLogsResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.ErrorResponse"
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     }
                 }
@@ -266,7 +567,133 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_httpapi.HealthResponse"
+                            "$ref": "#/definitions/httpapi.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/platform/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get system-wide metrics for admin/monitoring dashboard",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Platform"
+                ],
+                "summary": "Get platform analytics",
+                "responses": {
+                    "200": {
+                        "description": "Platform analytics",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/platform/workers/{id}/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get analytics for a specific worker node",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Platform"
+                ],
+                "summary": "Get worker analytics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Worker ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Worker analytics",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/workers": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get list of all worker nodes",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Platform"
+                ],
+                "summary": "List workers",
+                "responses": {
+                    "200": {
+                        "description": "List of workers",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
                     }
                 }
@@ -274,7 +701,263 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "internal_httpapi.AppLogsResponse": {
+        "domain.DeploymentDetails": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/domain.DeploymentRecord"
+                },
+                "metrics": {
+                    "$ref": "#/definitions/domain.DeploymentMetrics"
+                },
+                "pods": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain.PodMetrics"
+                    }
+                },
+                "resources": {
+                    "$ref": "#/definitions/domain.ResourceAllocation"
+                },
+                "scaling": {
+                    "$ref": "#/definitions/domain.ScalingInfo"
+                }
+            }
+        },
+        "domain.DeploymentMetrics": {
+            "type": "object",
+            "properties": {
+                "bandwidth_received_bytes": {
+                    "type": "integer"
+                },
+                "bandwidth_sent_bytes": {
+                    "type": "integer"
+                },
+                "cpu_usage_percent": {
+                    "type": "number"
+                },
+                "current_pods": {
+                    "type": "integer"
+                },
+                "deployment_id": {
+                    "type": "string"
+                },
+                "desired_pods": {
+                    "type": "integer"
+                },
+                "last_updated": {
+                    "type": "string"
+                },
+                "latency_p50_ms": {
+                    "type": "number"
+                },
+                "latency_p90_ms": {
+                    "type": "number"
+                },
+                "latency_p99_ms": {
+                    "type": "number"
+                },
+                "memory_usage_mb": {
+                    "type": "number"
+                },
+                "request_count_1h": {
+                    "type": "integer"
+                },
+                "request_count_24h": {
+                    "type": "integer"
+                },
+                "request_count_total": {
+                    "type": "integer"
+                },
+                "requests_per_second": {
+                    "type": "number"
+                }
+            }
+        },
+        "domain.DeploymentRecord": {
+            "type": "object",
+            "properties": {
+                "build_args": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "build_logs": {
+                    "type": "string"
+                },
+                "container": {
+                    "type": "string"
+                },
+                "cpu_cores": {
+                    "type": "number"
+                },
+                "cpu_limit_milli": {
+                    "type": "integer"
+                },
+                "cpu_request_milli": {
+                    "type": "integer"
+                },
+                "cpu_target_utilization": {
+                    "type": "integer"
+                },
+                "deployment_id": {
+                    "type": "string"
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "image": {
+                    "type": "string"
+                },
+                "max_replicas": {
+                    "type": "integer"
+                },
+                "memory_mb": {
+                    "type": "integer"
+                },
+                "min_replicas": {
+                    "type": "integer"
+                },
+                "node_selector": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "package": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "requested_by": {
+                    "type": "string"
+                },
+                "scaling_mode": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subdomain": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain.PodMetrics": {
+            "type": "object",
+            "properties": {
+                "age": {
+                    "description": "e.g., \"2h30m\"",
+                    "type": "string"
+                },
+                "cpu_usage_milli": {
+                    "description": "Current CPU usage in millicores",
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "memory_usage_mb": {
+                    "description": "Current memory usage in MB",
+                    "type": "number"
+                },
+                "pod_name": {
+                    "type": "string"
+                },
+                "ready": {
+                    "type": "boolean"
+                },
+                "restarts": {
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "Running, Pending, Failed, etc.",
+                    "type": "string"
+                }
+            }
+        },
+        "domain.ResourceAllocation": {
+            "type": "object",
+            "properties": {
+                "cpu_limit_milli": {
+                    "type": "integer"
+                },
+                "cpu_requested_milli": {
+                    "type": "integer"
+                },
+                "cpu_usage_milli": {
+                    "type": "integer"
+                },
+                "cpu_usage_percent": {
+                    "description": "vs requested",
+                    "type": "number"
+                },
+                "memory_limit_mb": {
+                    "type": "integer"
+                },
+                "memory_requested_mb": {
+                    "type": "integer"
+                },
+                "memory_usage_mb": {
+                    "type": "number"
+                },
+                "memory_usage_percent": {
+                    "description": "vs requested",
+                    "type": "number"
+                }
+            }
+        },
+        "domain.ScalingInfo": {
+            "type": "object",
+            "properties": {
+                "cpu_target_utilization": {
+                    "type": "integer"
+                },
+                "current_pods": {
+                    "type": "integer"
+                },
+                "desired_pods": {
+                    "type": "integer"
+                },
+                "hpa_enabled": {
+                    "type": "boolean"
+                },
+                "max_replicas": {
+                    "type": "integer"
+                },
+                "min_replicas": {
+                    "type": "integer"
+                },
+                "mode": {
+                    "description": "\"none\", \"horizontal\"",
+                    "type": "string"
+                }
+            }
+        },
+        "httpapi.AppLogsResponse": {
             "type": "object",
             "properties": {
                 "application_logs": {
@@ -295,7 +978,21 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.BuildLogsResponse": {
+        "httpapi.BatchDeploymentRequestPayload": {
+            "type": "object",
+            "required": [
+                "requests"
+            ],
+            "properties": {
+                "requests": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/httpapi.DeploymentRequestPayload"
+                    }
+                }
+            }
+        },
+        "httpapi.BuildLogsResponse": {
             "type": "object",
             "properties": {
                 "build_logs": {
@@ -312,7 +1009,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.DeployRequestPayload": {
+        "httpapi.DeployRequestPayload": {
             "type": "object",
             "required": [
                 "repo"
@@ -389,7 +1086,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.DeployResponse": {
+        "httpapi.DeployResponse": {
             "type": "object",
             "properties": {
                 "autoscaling_enabled": {
@@ -454,7 +1151,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.DeploymentInfo": {
+        "httpapi.DeploymentInfo": {
             "type": "object",
             "properties": {
                 "deployment_id": {
@@ -487,18 +1184,49 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.DeploymentListResponse": {
+        "httpapi.DeploymentListResponse": {
             "type": "object",
             "properties": {
                 "deployments": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/internal_httpapi.DeploymentInfo"
+                        "$ref": "#/definitions/httpapi.DeploymentInfo"
                     }
                 }
             }
         },
-        "internal_httpapi.ErrorResponse": {
+        "httpapi.DeploymentRequestPayload": {
+            "type": "object",
+            "properties": {
+                "bytes_received": {
+                    "type": "integer"
+                },
+                "bytes_sent": {
+                    "type": "integer"
+                },
+                "deployment_id": {
+                    "description": "UUID or subdomain",
+                    "type": "string"
+                },
+                "latency_ms": {
+                    "type": "number"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                },
+                "timestamp": {
+                    "description": "ISO 8601 format, optional",
+                    "type": "string"
+                }
+            }
+        },
+        "httpapi.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
@@ -507,7 +1235,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.HealthResponse": {
+        "httpapi.HealthResponse": {
             "type": "object",
             "properties": {
                 "status": {
@@ -516,7 +1244,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_httpapi.WhoAmIResponse": {
+        "httpapi.WhoAmIResponse": {
             "type": "object",
             "properties": {
                 "email": {

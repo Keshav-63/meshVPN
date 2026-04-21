@@ -6,15 +6,15 @@ worker:
 
 control_plane:
   url: http://control-plane.tail-scale-domain.ts.net:8080  # Or use Tailscale IP
-  shared_secret: "change-this-secret-in-production"
 
 runtime:
   type: kubernetes
   kubeconfig: /home/user/.kube/config
   namespace: worker-apps
   kubectl_bin: kubectl
+  app_base_domain: keshavstack.tech
   image_prefix: ghcr.io/your-github-username  # REQUIRED: Replace with your GitHub username
-
+ 
 capabilities:
   memory_gb: 16
   cpu_cores: 8

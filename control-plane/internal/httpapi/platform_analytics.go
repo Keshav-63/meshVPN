@@ -32,6 +32,15 @@ func NewPlatformAnalyticsHandler(
 }
 
 // GET /platform/analytics
+// @Summary      Get platform analytics
+// @Description  Get system-wide metrics for admin/monitoring dashboard
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "Platform analytics"
+// @Failure      401  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /platform/analytics [get]
 func (h *PlatformAnalyticsHandler) GetPlatformAnalytics(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -112,6 +121,11 @@ func (h *PlatformAnalyticsHandler) GetPlatformAnalytics(c *gin.Context) {
 	}
 
 	// Build response
+	capacityUtilization := 0.0
+	if totalCapacity > 0 {
+		capacityUtilization = float64(usedCapacity) / float64(totalCapacity) * 100
+	}
+
 	response := gin.H{
 		"platform": gin.H{
 			"deployments": gin.H{
@@ -127,19 +141,19 @@ func (h *PlatformAnalyticsHandler) GetPlatformAnalytics(c *gin.Context) {
 				"offline": offlineWorkers,
 			},
 			"capacity": gin.H{
-				"total":              totalCapacity,
-				"used":               usedCapacity,
-				"available":          totalCapacity - usedCapacity,
-				"utilization_percent": float64(usedCapacity) / float64(totalCapacity) * 100,
+				"total":               totalCapacity,
+				"used":                usedCapacity,
+				"available":           totalCapacity - usedCapacity,
+				"utilization_percent": capacityUtilization,
 			},
 			"resources": gin.H{
 				"total_pods": totalPods,
 			},
 			"traffic": gin.H{
-				"total_requests":         totalRequests,
-				"bandwidth_sent_bytes":   totalBandwidthSent,
-				"bandwidth_recv_bytes":   totalBandwidthReceived,
-				"avg_latency_p50_ms":     avgLatencyP50,
+				"total_requests":       totalRequests,
+				"bandwidth_sent_bytes": totalBandwidthSent,
+				"bandwidth_recv_bytes": totalBandwidthReceived,
+				"avg_latency_p50_ms":   avgLatencyP50,
 			},
 		},
 		"workers": h.getWorkerBreakdown(workers, deployments),
@@ -148,7 +162,75 @@ func (h *PlatformAnalyticsHandler) GetPlatformAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// GET /platform/analytics/deployments
+// @Summary      Get platform deployment analytics list
+// @Description  Returns per-deployment analytics rows for platform dashboards.
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "Per-deployment platform analytics"
+// @Failure      401  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /platform/analytics/deployments [get]
+func (h *PlatformAnalyticsHandler) GetDeploymentAnalytics(c *gin.Context) {
+	deployments := h.deploymentRepo.List()
+	items := make([]gin.H, 0, len(deployments))
+
+	for _, dep := range deployments {
+		metrics := domain.DeploymentMetrics{DeploymentID: dep.DeploymentID}
+		if h.analyticsRepo != nil {
+			loaded, err := h.analyticsRepo.GetMetrics(dep.DeploymentID)
+			if err == nil {
+				metrics = loaded
+			} else {
+				logs.Errorf("platform-analytics", "failed to get deployment metrics deployment_id=%s: %v", dep.DeploymentID, err)
+			}
+		}
+
+		items = append(items, gin.H{
+			"deployment_id":   dep.DeploymentID,
+			"user_id":         dep.UserID,
+			"subdomain":       dep.Subdomain,
+			"url":             dep.URL,
+			"status":          dep.Status,
+			"owner_worker_id": dep.OwnerWorkerID,
+			"package":         dep.Package,
+			"requested_at":    dep.StartedAt,
+			"metrics": gin.H{
+				"requests_total":       metrics.RequestCountTotal,
+				"requests_last_hour":   metrics.RequestCount1h,
+				"bandwidth_sent_bytes": metrics.BandwidthSentBytes,
+				"bandwidth_recv_bytes": metrics.BandwidthRecvBytes,
+				"current_pods":         metrics.CurrentPods,
+				"desired_pods":         metrics.DesiredPods,
+				"cpu_usage_percent":    metrics.CPUUsagePercent,
+				"memory_usage_mb":      metrics.MemoryUsageMB,
+				"latency_p50_ms":       metrics.LatencyP50Ms,
+				"latency_p90_ms":       metrics.LatencyP90Ms,
+				"latency_p99_ms":       metrics.LatencyP99Ms,
+				"last_updated":         metrics.LastUpdated,
+			},
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"count":       len(items),
+		"deployments": items,
+	})
+}
+
 // GET /platform/workers/:id/analytics
+// @Summary      Get worker analytics
+// @Description  Get analytics for a specific worker node
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Worker ID"
+// @Success      200  {object}  map[string]interface{}  "Worker analytics"
+// @Failure      401  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /platform/workers/{id}/analytics [get]
 func (h *PlatformAnalyticsHandler) GetWorkerAnalytics(c *gin.Context) {
 	ctx := c.Request.Context()
 	workerID := c.Param("id")
@@ -179,13 +261,13 @@ func (h *PlatformAnalyticsHandler) GetWorkerAnalytics(c *gin.Context) {
 					totalRequests += metrics.RequestCountTotal
 
 					workerDeployments = append(workerDeployments, gin.H{
-						"deployment_id":  d.DeploymentID,
-						"subdomain":      d.Subdomain,
-						"package":        d.Package,
-						"current_pods":   metrics.CurrentPods,
-						"request_count":  metrics.RequestCountTotal,
-						"cpu_percent":    metrics.CPUUsagePercent,
-						"memory_mb":      metrics.MemoryUsageMB,
+						"deployment_id": d.DeploymentID,
+						"subdomain":     d.Subdomain,
+						"package":       d.Package,
+						"current_pods":  metrics.CurrentPods,
+						"request_count": metrics.RequestCountTotal,
+						"cpu_percent":   metrics.CPUUsagePercent,
+						"memory_mb":     metrics.MemoryUsageMB,
 					})
 				}
 			}
@@ -194,13 +276,13 @@ func (h *PlatformAnalyticsHandler) GetWorkerAnalytics(c *gin.Context) {
 
 	response := gin.H{
 		"worker": gin.H{
-			"worker_id":          worker.WorkerID,
-			"name":               worker.Name,
-			"tailscale_ip":       worker.TailscaleIP,
-			"status":             worker.Status,
-			"current_jobs":       worker.CurrentJobs,
+			"worker_id":           worker.WorkerID,
+			"name":                worker.Name,
+			"tailscale_ip":        worker.TailscaleIP,
+			"status":              worker.Status,
+			"current_jobs":        worker.CurrentJobs,
 			"max_concurrent_jobs": worker.MaxConcurrentJobs,
-			"last_heartbeat":     worker.LastHeartbeat,
+			"last_heartbeat":      worker.LastHeartbeat,
 		},
 		"resources": gin.H{
 			"total_pods":     totalPods,
@@ -227,15 +309,15 @@ func (h *PlatformAnalyticsHandler) getWorkerBreakdown(workers []domain.Worker, d
 		}
 
 		breakdown = append(breakdown, gin.H{
-			"worker_id":          w.WorkerID,
-			"name":               w.Name,
-			"status":             w.Status,
-			"current_jobs":       w.CurrentJobs,
+			"worker_id":           w.WorkerID,
+			"name":                w.Name,
+			"status":              w.Status,
+			"current_jobs":        w.CurrentJobs,
 			"max_concurrent_jobs": w.MaxConcurrentJobs,
-			"deployment_count":   deploymentCount,
-			"cpu_cores":          w.Capabilities.CPUCores,
-			"memory_gb":          w.Capabilities.MemoryGB,
-			"last_heartbeat":     w.LastHeartbeat,
+			"deployment_count":    deploymentCount,
+			"cpu_cores":           w.Capabilities.CPUCores,
+			"memory_gb":           w.Capabilities.MemoryGB,
+			"last_heartbeat":      w.LastHeartbeat,
 		})
 	}
 

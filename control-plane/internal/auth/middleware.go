@@ -175,6 +175,16 @@ func RequireSupabaseAuth(cfg MiddlewareConfig) gin.HandlerFunc {
 
 		authz := strings.TrimSpace(c.GetHeader("Authorization"))
 		if authz == "" {
+			// SSE EventSource in browsers cannot send custom Authorization headers.
+			// Allow token query param only for SSE stream endpoints.
+			if c.Request.Method == http.MethodGet && (strings.HasSuffix(c.Request.URL.Path, "/analytics/stream") || strings.HasSuffix(c.Request.URL.Path, "/build-logs/stream") || strings.HasSuffix(c.Request.URL.Path, "/app-logs/stream")) {
+				if token := strings.TrimSpace(c.Query("token")); token != "" {
+					authz = "Bearer " + token
+				}
+			}
+		}
+
+		if authz == "" {
 			logs.Errorf("auth", "missing authorization header")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
 			return

@@ -53,10 +53,12 @@ func NewDeploymentService(repo store.DeploymentRepository, jobs store.JobReposit
 }
 
 func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest) (domain.DeploymentRecord, error) {
-	logs.Debugf("service", "enqueue deployment requested_by=%s repo=%s", req.RequestedBy, req.Repo)
+	logs.Debugf("service", "enqueue deployment requested_by=%s repo=%s subdomain=%s package=%s cpu=%.2f memory_mb=%d scaling_mode=%s",
+		req.RequestedBy, req.Repo, req.Subdomain, req.Package, req.CPUCores, req.MemoryMB, req.ScalingMode)
 	policy := NewCPUFirstAutoscalingPolicy()
 	normalizedReq, err := policy.Normalize(req)
 	if err != nil {
+		logs.Errorf("service", "deployment normalization failed requested_by=%s repo=%s err=%v", req.RequestedBy, req.Repo, err)
 		return domain.DeploymentRecord{}, err
 	}
 	req = normalizedReq
@@ -122,6 +124,8 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 		StartedAt:    start,
 	}
 	s.repo.Start(record)
+	logs.Infof("service", "deployment record stored deployment_id=%s subdomain=%s requested_by=%s package=%s cpu=%.2f memory_mb=%d",
+		deploymentID, subdomain, record.RequestedBy, record.Package, record.CPUCores, record.MemoryMB)
 
 	job := domain.DeploymentJob{
 		JobID:        strings.ReplaceAll(uuid.NewString(), "-", "")[:12],
@@ -150,7 +154,8 @@ func (s *DeploymentService) EnqueueDeploy(ctx context.Context, req DeployRequest
 	}
 
 	telemetry.ObserveDeployRequest(req.ScalingMode)
-	logs.Infof("service", "enqueued deployment deployment_id=%s job_id=%s", deploymentID, job.JobID)
+	logs.Infof("service", "enqueued deployment deployment_id=%s job_id=%s subdomain=%s worker_assignment=%s",
+		deploymentID, job.JobID, subdomain, job.AssignedWorkerID)
 	return record, nil
 }
 
@@ -167,6 +172,32 @@ func (s *DeploymentService) ListDeploymentsByUser(userID string) []domain.Deploy
 func (s *DeploymentService) GetDeployment(id string) (domain.DeploymentRecord, error) {
 	logs.Debugf("service", "get deployment id=%s", id)
 	return s.repo.Get(strings.TrimSpace(id))
+}
+
+// ResolveDeploymentID converts a deployment identifier (id or subdomain) to canonical deployment ID.
+// If no match is found, the trimmed input is returned unchanged.
+func (s *DeploymentService) ResolveDeploymentID(identifier string) string {
+	resolved := strings.TrimSpace(identifier)
+	if resolved == "" {
+		return ""
+	}
+
+	if rec, err := s.repo.Get(resolved); err == nil && strings.TrimSpace(rec.DeploymentID) != "" {
+		return rec.DeploymentID
+	}
+
+	candidate := strings.ToLower(resolved)
+	if strings.Contains(candidate, ".") {
+		candidate = strings.Split(candidate, ".")[0]
+	}
+
+	for _, rec := range s.repo.List() {
+		if strings.EqualFold(rec.Subdomain, candidate) {
+			return rec.DeploymentID
+		}
+	}
+
+	return resolved
 }
 
 func (s *DeploymentService) GetAppLogs(id string, tail int) (domain.DeploymentRecord, string, error) {

@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
 	"MeshVPN-slef-hosting/control-plane/internal/logs"
@@ -13,12 +16,14 @@ import (
 type WorkerHandler struct {
 	workerRepo store.WorkerRepository
 	jobRepo    store.JobRepository
+	deployRepo store.DeploymentRepository
 }
 
-func NewWorkerHandler(workerRepo store.WorkerRepository, jobRepo store.JobRepository) *WorkerHandler {
+func NewWorkerHandler(workerRepo store.WorkerRepository, jobRepo store.JobRepository, deployRepo store.DeploymentRepository) *WorkerHandler {
 	return &WorkerHandler{
 		workerRepo: workerRepo,
 		jobRepo:    jobRepo,
+		deployRepo: deployRepo,
 	}
 }
 
@@ -68,13 +73,20 @@ func (h *WorkerHandler) Heartbeat(c *gin.Context) {
 	workerID := c.Param("id")
 
 	var req struct {
-		Status      string `json:"status"`       // idle, busy
+		Status      string `json:"status"` // idle, busy
 		CurrentJobs int    `json:"current_jobs"`
 	}
-	c.BindJSON(&req)
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			logs.Errorf("workers", "invalid heartbeat payload worker_id=%s err=%v", workerID, err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid heartbeat payload"})
+			return
+		}
+	}
 
 	// Update heartbeat timestamp
 	if err := h.workerRepo.UpdateHeartbeat(c.Request.Context(), workerID); err != nil {
+		logs.Errorf("workers", "heartbeat update failed worker_id=%s err=%v", workerID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat update failed"})
 		return
 	}
@@ -85,7 +97,15 @@ func (h *WorkerHandler) Heartbeat(c *gin.Context) {
 		if err == nil {
 			worker.Status = req.Status
 			worker.CurrentJobs = req.CurrentJobs
-			h.workerRepo.Update(c.Request.Context(), worker)
+			if err := h.workerRepo.Update(c.Request.Context(), worker); err != nil {
+				logs.Errorf("workers", "heartbeat status update failed worker_id=%s err=%v", workerID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat status update failed"})
+				return
+			}
+		} else {
+			logs.Errorf("workers", "heartbeat worker lookup failed worker_id=%s err=%v", workerID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "heartbeat worker lookup failed"})
+			return
 		}
 	}
 
@@ -115,7 +135,8 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 	workerID := c.Param("id")
 
 	var req struct {
-		JobID string `json:"job_id" binding:"required"`
+		JobID        string `json:"job_id" binding:"required"`
+		DeploymentID string `json:"deployment_id"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id required"})
@@ -123,10 +144,39 @@ func (h *WorkerHandler) JobComplete(c *gin.Context) {
 	}
 
 	// Mark job as done
-	h.jobRepo.MarkDone(c.Request.Context(), req.JobID)
+	if err := h.jobRepo.MarkDone(c.Request.Context(), req.JobID); err != nil {
+		logs.Errorf("workers", "mark job done failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark job done"})
+		return
+	}
 
 	// Decrement worker job count
-	h.workerRepo.DecrementJobCount(c.Request.Context(), workerID)
+	if err := h.workerRepo.DecrementJobCount(c.Request.Context(), workerID); err != nil {
+		logs.Errorf("workers", "decrement worker job count failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrement worker job count"})
+		return
+	}
+
+	if h.deployRepo != nil && req.DeploymentID != "" {
+		rec, err := h.deployRepo.Get(req.DeploymentID)
+		if err == nil {
+			n := rec
+			n.Status = "running"
+			n.OwnerWorkerID = workerID
+			if strings.TrimSpace(n.Container) == "" {
+				n.Container = "app-" + req.DeploymentID
+			}
+			if strings.TrimSpace(n.URL) == "" {
+				n.URL = buildWorkerDeploymentURL(n.Subdomain)
+			}
+			n.Error = ""
+			n.FinishedAt = nil
+			n.BuildLogs = n.BuildLogs + "\n=== worker ===\nremote worker reported job complete\n"
+			h.deployRepo.Update(n)
+		} else {
+			logs.Errorf("workers", "deployment lookup failed for job complete worker_id=%s deployment_id=%s err=%v", workerID, req.DeploymentID, err)
+		}
+	}
 
 	logs.Infof("workers", "job completed worker_id=%s job_id=%s", workerID, req.JobID)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -137,8 +187,9 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 	workerID := c.Param("id")
 
 	var req struct {
-		JobID string `json:"job_id" binding:"required"`
-		Error string `json:"error"`
+		JobID        string `json:"job_id" binding:"required"`
+		DeploymentID string `json:"deployment_id"`
+		Error        string `json:"error"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id required"})
@@ -146,16 +197,56 @@ func (h *WorkerHandler) JobFailed(c *gin.Context) {
 	}
 
 	// Mark job as failed
-	h.jobRepo.MarkFailed(c.Request.Context(), req.JobID, req.Error)
+	if err := h.jobRepo.MarkFailed(c.Request.Context(), req.JobID, req.Error); err != nil {
+		logs.Errorf("workers", "mark job failed failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark job failed"})
+		return
+	}
 
 	// Decrement worker job count
-	h.workerRepo.DecrementJobCount(c.Request.Context(), workerID)
+	if err := h.workerRepo.DecrementJobCount(c.Request.Context(), workerID); err != nil {
+		logs.Errorf("workers", "decrement worker job count failed worker_id=%s job_id=%s err=%v", workerID, req.JobID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrement worker job count"})
+		return
+	}
+
+	if h.deployRepo != nil && req.DeploymentID != "" {
+		rec, err := h.deployRepo.Get(req.DeploymentID)
+		if err == nil {
+			finishedAt := time.Now().UTC()
+			n := rec
+			n.Status = "failed"
+			n.OwnerWorkerID = workerID
+			if strings.TrimSpace(n.Container) == "" {
+				n.Container = "app-" + req.DeploymentID
+			}
+			if strings.TrimSpace(n.URL) == "" {
+				n.URL = buildWorkerDeploymentURL(n.Subdomain)
+			}
+			n.Error = req.Error
+			n.FinishedAt = &finishedAt
+			n.BuildLogs = n.BuildLogs + "\n=== worker error ===\n" + req.Error + "\n"
+			h.deployRepo.Update(n)
+		} else {
+			logs.Errorf("workers", "deployment lookup failed for job failed worker_id=%s deployment_id=%s err=%v", workerID, req.DeploymentID, err)
+		}
+	}
 
 	logs.Errorf("workers", "job failed worker_id=%s job_id=%s err=%s", workerID, req.JobID, req.Error)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 // GET /api/workers
+// @Summary      List workers
+// @Description  Get list of all worker nodes
+// @Tags         Platform
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "List of workers"
+// @Failure      401  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Security     BearerAuth
+// @Router       /workers [get]
 func (h *WorkerHandler) List(c *gin.Context) {
 	workers, err := h.workerRepo.List(c.Request.Context())
 	if err != nil {
@@ -164,4 +255,13 @@ func (h *WorkerHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"workers": workers})
+}
+
+func buildWorkerDeploymentURL(subdomain string) string {
+	baseDomain := strings.Trim(strings.ToLower(strings.TrimSpace(os.Getenv("APP_BASE_DOMAIN"))), ".")
+	if baseDomain == "" {
+		baseDomain = "keshavstack.tech"
+	}
+
+	return "https://" + subdomain + "." + baseDomain
 }

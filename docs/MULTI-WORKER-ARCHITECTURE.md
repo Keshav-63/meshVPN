@@ -41,6 +41,70 @@ User → Control-Plane API → Job Queue
       Deploy to K8s     Deploy to K8s     Deploy to K8s
 ```
 
+    ## Final Runtime Logic (Source of Truth)
+
+    This section is the authoritative runtime behavior implemented in the current code.
+
+    ### Deployment State Machine
+
+    Allowed deployment statuses:
+
+    - `queued`: Request accepted and job is waiting for assignment.
+    - `deploying`: Job has been assigned/claimed and deployment is in progress.
+    - `running`: Deployment completed successfully.
+    - `failed`: Deployment or worker execution failed.
+
+    State transitions:
+
+    1. API enqueue creates deployment in `queued`.
+    2. Distributor assigns job to worker and marks deployment `deploying` with `owner_worker_id`.
+    3. Worker success path marks deployment `running`.
+    4. Worker failure path marks deployment `failed` and stores error/build logs.
+    5. Failover/rebalance re-queue path moves deployment back to `queued`, clears owner, and creates a new job.
+
+    ### Job State Machine
+
+    Allowed job statuses in persistence:
+
+    - `queued`: Ready for assignment/claim.
+    - `running`: Claimed by a worker.
+    - `done`: Completed successfully.
+    - `failed`: Completed with error.
+
+    State transitions:
+
+    1. Enqueue inserts job as `queued`.
+    2. Claim (`ClaimNext` or `ClaimForWorker`) sets job `running`.
+    3. Worker completion callback sets job `done`.
+    4. Worker failure callback sets job `failed`.
+
+    ### Assignment and Capacity Rules
+
+    1. Distributor picks only unassigned queued jobs.
+    2. Distributor assigns worker only when worker is not `offline` and `current_jobs < max_concurrent_jobs`.
+    3. Distributor increments worker `current_jobs` only after successful assignment.
+    4. If increment fails, assignment is released immediately (job is not left stuck assigned).
+    5. In multi-worker mode, embedded control-plane worker claims only jobs assigned to its own `worker_id`.
+    6. Worker `current_jobs` is decremented after each claimed assigned job completes or fails.
+
+    ### Health, Failover, and Rebalance Rules
+
+    1. Worker heartbeat timeout marks remote worker `offline`.
+    2. Running deployments owned by offline workers are re-queued for failover.
+    3. Rebalance moves running deployments only when:
+       - cooldown window has passed, and
+       - score delta exceeds minimum threshold.
+    4. Re-queued deployments receive a fresh job id and remain traceable via deployment id.
+
+    ### Callback Guarantees
+
+    Worker callback endpoints enforce strict updates:
+
+    1. `job-complete` must mark job `done` successfully before decrementing worker load.
+    2. `job-failed` must mark job `failed` successfully before decrementing worker load.
+    3. Heartbeat updates fail fast on invalid payloads or missing workers.
+    4. Database updates that affect zero rows are treated as errors (not silent success).
+
 ## Database Schema
 
 ### Workers Table

@@ -1,12 +1,12 @@
 # Resource Packages Documentation
 
-This document explains the resource package system for MeshVPN deployments and how subscription status affects autoscaling behavior.
+This document explains the resource package system for MeshVPN deployments and autoscaling behavior.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Package Tiers](#package-tiers)
-- [Subscription vs Non-Subscription](#subscription-vs-non-subscription)
+- [Autoscaling Availability](#autoscaling-availability)
 - [Selecting a Package](#selecting-a-package)
 - [Package Specifications](#package-specifications)
 - [Autoscaling Behavior](#autoscaling-behavior)
@@ -23,7 +23,7 @@ MeshVPN provides three predefined resource packages for easy deployment sizing:
 - **Medium**: Standard web applications, microservices
 - **Large**: Resource-intensive applications, databases, data processing
 
-Packages define CPU, memory, and maximum replica limits. **Subscribers** additionally get horizontal autoscaling based on CPU usage.
+Packages define CPU, memory, and maximum replica limits. All users get horizontal autoscaling based on CPU and memory usage.
 
 ---
 
@@ -40,7 +40,7 @@ Packages define CPU, memory, and maximum replica limits. **Subscribers** additio
 **Specifications:**
 - CPU: 0.5 cores (500 millicores)
 - Memory: 512 MB
-- Max Replicas: 3 (subscribers only)
+- Max Replicas: 3
 
 **Example use cases:**
 - Next.js static site
@@ -61,7 +61,7 @@ Packages define CPU, memory, and maximum replica limits. **Subscribers** additio
 **Specifications:**
 - CPU: 1.0 core (1000 millicores)
 - Memory: 1024 MB (1 GB)
-- Max Replicas: 5 (subscribers only)
+- Max Replicas: 5
 
 **Example use cases:**
 - React/Vue application
@@ -83,7 +83,7 @@ Packages define CPU, memory, and maximum replica limits. **Subscribers** additio
 **Specifications:**
 - CPU: 2.0 cores (2000 millicores)
 - Memory: 2048 MB (2 GB)
-- Max Replicas: 10 (subscribers only)
+- Max Replicas: 10
 
 **Example use cases:**
 - Large Next.js application
@@ -94,40 +94,15 @@ Packages define CPU, memory, and maximum replica limits. **Subscribers** additio
 
 ---
 
-## Subscription vs Non-Subscription
+## Autoscaling Availability
 
-### Non-Subscribers (Free Tier)
+All users get horizontal autoscaling.
 
-- **Fixed Resources**: Package specs are applied, but scaling is disabled
-- **Single Replica**: Always runs exactly 1 pod
-- **No Autoscaling**: Pod count does not change based on load
-- **All Packages Available**: Can still choose Small, Medium, or Large
-
-**Example:**
-```json
-POST /deploy
-{
-  "repo": "https://github.com/user/my-app",
-  "package": "medium"
-}
-
-Response:
-{
-  "scaling_mode": "none",
-  "min_replicas": 1,
-  "max_replicas": 1,
-  "cpu_cores": 1.0,
-  "memory_mb": 1024,
-  "autoscaling_enabled": false
-}
-```
-
-### Subscribers
-
-- **Horizontal Autoscaling**: Automatically scales pods based on CPU usage
-- **Dynamic Replicas**: Scales from 1 to package max_replicas
-- **CPU Target**: Default 70% CPU utilization trigger
-- **Customizable**: Can override scaling parameters
+- **Horizontal Autoscaling**: Automatically scales pods based on CPU or memory pressure.
+- **Dynamic Replicas**: Scales from 1 to package max_replicas.
+- **CPU Target**: Default 70% CPU utilization trigger.
+- **Memory Target**: Default 75% memory utilization trigger.
+- **Customizable CPU Target**: `cpu_target_utilization` can be overridden per deployment.
 
 **Example:**
 ```json
@@ -145,6 +120,7 @@ Response:
   "cpu_cores": 1.0,
   "memory_mb": 1024,
   "cpu_target_utilization": 70,
+  "memory_target_utilization": 75,
   "autoscaling_enabled": true
 }
 ```
@@ -204,9 +180,9 @@ Invalid package names will return a `400 Bad Request` error.
 
 Each pod gets:
 - **CPU Request**: Package CPU cores
-- **CPU Limit**: 500m (safety limit to prevent runaway processes)
+- **CPU Limit**: 2x CPU request (with a floor of request value)
 - **Memory Request**: Package memory MB
-- **Memory Limit**: Same as request (hard limit)
+- **Memory Limit**: 2x memory request (with a floor of request value)
 
 **Example for Medium Package:**
 ```yaml
@@ -215,15 +191,15 @@ resources:
     cpu: "1000m"
     memory: "1024Mi"
   limits:
-    cpu: "500m"      # Safety limit
-    memory: "1024Mi"
+    cpu: "2000m"
+    memory: "2048Mi"
 ```
 
 ---
 
 ## Autoscaling Behavior
 
-### For Subscribers Only
+### For All Users
 
 Kubernetes Horizontal Pod Autoscaler (HPA) is created with these settings:
 
@@ -246,24 +222,30 @@ spec:
       target:
         type: Utilization
         averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
 ```
 
 ### Scaling Triggers
 
-- **Scale Up**: When CPU usage exceeds 70% for sustained period
-- **Scale Down**: When CPU usage drops below 70% consistently
+- **Scale Up**: When CPU usage or memory usage exceeds configured targets
+- **Scale Down**: Controlled with a short stabilization window to avoid flapping
 - **Max Pods**: Limited by package tier (3, 5, or 10)
 - **Min Pods**: Always 1 (deployments never scale to zero)
 
 ### Scaling Timeline
 
-- **Scale Up**: Usually 30-60 seconds after CPU threshold crossed
-- **Scale Down**: 5 minutes cooldown to prevent flapping
+- **Scale Up**: Near-immediate (controller loop + pod scheduling)
+- **Scale Down**: 60 seconds stabilization window by default
 - **Pod Startup**: Depends on application (typically 10-30 seconds)
 
-### Custom Scaling Parameters (Subscribers Only)
+### Custom Scaling Parameters
 
-Subscribers can customize scaling behavior:
+All users can customize scaling behavior:
 
 ```json
 POST /deploy
@@ -305,7 +287,7 @@ POST /deploy
 - **Python/ML Apps**: Large (1024-2048 MB)
 - **Databases**: Large with persistent volumes
 
-### Autoscaling Tips (Subscribers)
+### Autoscaling Tips
 
 1. **Set Realistic CPU Targets**: 70-80% is optimal; too low wastes resources
 2. **Warm-up Considerations**: Apps with slow startup should use higher min_replicas
@@ -346,12 +328,12 @@ Always monitor your analytics to stay within limits.
 
 Package selection does not directly affect pricing, but:
 - Larger packages use more cluster resources
-- Subscribers with autoscaling may use more resources during traffic spikes
+- Autoscaling may use more resources during traffic spikes
 - Pricing is based on total resource usage across all deployments
 
-### Can non-subscribers use autoscaling?
+### Can free-tier users use autoscaling?
 
-No. Autoscaling is a subscriber-only feature. Non-subscribers always run 1 replica regardless of package size.
+Yes. Autoscaling is available for all users.
 
 ### How do I become a subscriber?
 

@@ -1,5 +1,5 @@
 # Traefik Middleware for MeshVPN Telemetry
-# This middleware captures HTTP request metrics and sends them to the control-plane
+# This middleware enables request tracking for deployed applications
 ---
 apiVersion: traefik.containo.us/v1alpha1
 kind: Middleware
@@ -7,22 +7,81 @@ metadata:
   name: meshvpn-telemetry
   namespace: meshvpn-apps
 spec:
-  plugin:
-    telemetry:
-      # This is a placeholder - Traefik plugins require installation
-      # For now, we'll use accessLog instead
-      enabled: false
+  # Use the Headers middleware to add custom request headers
+  headers:
+    customRequestHeaders:
+      X-MeshVPN-Telemetry: "enabled"
 
 ---
-# Alternative: Use Traefik AccessLog to capture metrics
-# This should be configured in the Traefik deployment itself
-# Add to Traefik command args:
+# NOTE: Traffic tracking implementation options:
+#
+# OPTION 1: Traefik Access Logs (Recommended for production)
+# Enable Traefik access logs and parse them to send to telemetry endpoint
+# Add to Traefik deployment args:
 #   --accesslog=true
 #   --accesslog.format=json
-#   --accesslog.fields.headers.defaultmode=keep
+#   --accesslog.filepath=/var/log/traefik/access.log
+# Then use a sidecar (Fluent Bit or Logstash) to parse and forward to:
+#   POST http://control-plane:8080/api/telemetry/deployment-request
+#
+# OPTION 2: Traefik Plugin (Custom implementation required)
+# Create a custom Traefik plugin that intercepts requests and sends metrics
+# Plugin would:
+#   - Extract deployment ID from Host header (subdomain)
+#   - Measure request latency
+#   - Count bytes sent/received
+#   - POST to control-plane telemetry endpoint asynchronously
+#
+# OPTION 3: Nginx Sidecar (Alternative approach)
+# Deploy nginx as a sidecar in each pod to proxy requests
+# Configure nginx access logs to send to telemetry endpoint
+# Pros: More control, easier to implement
+# Cons: Additional container overhead
+#
+# CURRENT STATE:
+# - Telemetry endpoint exists: POST /api/telemetry/deployment-request
+# - Database schema ready: deployment_requests table
+# - Collector aggregates metrics every minute
+# - This middleware is referenced in ingress annotations
+#
+# TO ACTIVATE TRAFFIC TRACKING:
+# 1. Choose one of the options above
+# 2. Implement the log parsing/forwarding logic
+# 3. Verify data appears in deployment_requests table
+# 4. Check analytics endpoints show request counts
 
-# For K3D/K3s, AccessLog is already enabled
-# We need to parse the logs and send to control-plane
+---
+# Example: Fluentbit ConfigMap for parsing Traefik access logs
+# This would parse Traefik JSON access logs and send to telemetry endpoint
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-traefik-parser
+  namespace: meshvpn-apps
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Log_Level    info
 
-# Instead, we'll use a simpler approach:
-# Add annotations to each Ingress to enable per-deployment tracking
+    [INPUT]
+        Name              tail
+        Path              /var/log/traefik/access.log
+        Parser            json
+        Tag               traefik.access
+        Refresh_Interval  5
+
+    [FILTER]
+        Name    modify
+        Match   traefik.access
+        # Extract deployment ID from request host
+        # Example: myapp.keshavstack.tech -> myapp
+        Add deployment_id ${RequestHost}
+
+    [OUTPUT]
+        Name   http
+        Match  traefik.access
+        Host   control-plane.default.svc.cluster.local
+        Port   8080
+        URI    /api/telemetry/deployment-request
+        Format json

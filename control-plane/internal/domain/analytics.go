@@ -32,3 +32,62 @@ type DeploymentRequest struct {
 	BytesReceived int64     `json:"bytes_received"`
 	Path          string    `json:"path"`
 }
+
+// PodMetrics represents metrics for a single pod
+type PodMetrics struct {
+	PodName       string    `json:"pod_name"`
+	Status        string    `json:"status"` // Running, Pending, Failed, etc.
+	Ready         bool      `json:"ready"`
+	Restarts      int       `json:"restarts"`
+	CPUUsageMilli int64     `json:"cpu_usage_milli"` // Current CPU usage in millicores
+	MemoryUsageMB float64   `json:"memory_usage_mb"` // Current memory usage in MB
+	Age           string    `json:"age"`             // e.g., "2h30m"
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// ResourceAllocation shows requested, limit, and current usage
+type ResourceAllocation struct {
+	CPURequested       int     `json:"cpu_requested_milli"`
+	CPULimit           int     `json:"cpu_limit_milli"`
+	CPUUsageMilli      int64   `json:"cpu_usage_milli"`
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`    // vs requested
+	MemoryRequested    int     `json:"memory_requested_mb"`
+	MemoryLimit        int     `json:"memory_limit_mb"`
+	MemoryUsageMB      float64 `json:"memory_usage_mb"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent"` // vs requested
+}
+
+// ScalingInfo provides scaling configuration and status
+type ScalingInfo struct {
+	Mode        string `json:"mode"` // "none", "horizontal"
+	CurrentPods int    `json:"current_pods"`
+	DesiredPods int    `json:"desired_pods"`
+	MinReplicas int    `json:"min_replicas"`
+	MaxReplicas int    `json:"max_replicas"`
+	CPUTarget   int    `json:"cpu_target_utilization"`
+	HPAEnabled  bool   `json:"hpa_enabled"`
+}
+
+// DeploymentDetails combines all deployment information
+type DeploymentDetails struct {
+	Deployment DeploymentRecord   `json:"deployment"`
+	Metrics    DeploymentMetrics  `json:"metrics"`
+	Pods       []PodMetrics       `json:"pods"`
+	Resources  ResourceAllocation `json:"resources"`
+	Scaling    ScalingInfo        `json:"scaling"`
+}
+
+// DeploymentSummary for list endpoint with key metrics
+type DeploymentSummary struct {
+	DeploymentID    string    `json:"deployment_id"`
+	Subdomain       string    `json:"subdomain"`
+	URL             string    `json:"url"`
+	Status          string    `json:"status"`
+	Package         string    `json:"package"`
+	CurrentPods     int       `json:"current_pods"`
+	RequestCount24h int64     `json:"request_count_24h"`
+	CPUUsagePercent float64   `json:"cpu_usage_percent"`
+	MemoryUsageMB   float64   `json:"memory_usage_mb"`
+	LastUpdated     time.Time `json:"last_updated"`
+	StartedAt       time.Time `json:"started_at"`
+}

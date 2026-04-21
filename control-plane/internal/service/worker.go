@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"MeshVPN-slef-hosting/control-plane/internal/domain"
@@ -15,16 +16,22 @@ import (
 type DeploymentWorker struct {
 	repo         store.DeploymentRepository
 	jobs         store.JobRepository
+	workers      store.WorkerRepository
 	runner       *runtime.Runner
 	pollInterval time.Duration
 	enableCPUHPA bool
+	workerID     string
+	useAssigned  bool
 }
 
-func NewDeploymentWorker(repo store.DeploymentRepository, jobs store.JobRepository, runner *runtime.Runner, pollInterval time.Duration, enableCPUHPA bool) *DeploymentWorker {
+func NewDeploymentWorker(repo store.DeploymentRepository, jobs store.JobRepository, workers store.WorkerRepository, runner *runtime.Runner, pollInterval time.Duration, enableCPUHPA bool, workerID string, useAssigned bool) *DeploymentWorker {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
-	return &DeploymentWorker{repo: repo, jobs: jobs, runner: runner, pollInterval: pollInterval, enableCPUHPA: enableCPUHPA}
+	if strings.TrimSpace(workerID) == "" {
+		workerID = "control-plane-local"
+	}
+	return &DeploymentWorker{repo: repo, jobs: jobs, workers: workers, runner: runner, pollInterval: pollInterval, enableCPUHPA: enableCPUHPA, workerID: workerID, useAssigned: useAssigned}
 }
 
 func (w *DeploymentWorker) Start(ctx context.Context) {
@@ -50,7 +57,16 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 		telemetry.ObserveWorkerJob(finalStatus, startedAt)
 	}()
 
-	job, err := w.jobs.ClaimNext(ctx)
+	var (
+		job domain.DeploymentJob
+		err error
+	)
+
+	if w.useAssigned {
+		job, err = w.jobs.ClaimForWorker(ctx, w.workerID)
+	} else {
+		job, err = w.jobs.ClaimNext(ctx)
+	}
 	if err != nil {
 		if err == store.ErrNoQueuedJobs {
 			finalStatus = "empty"
@@ -58,11 +74,22 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 			return
 		}
 		finalStatus = "claim_failed"
-		logs.Errorf("worker", "claim next job failed err=%v", err)
+		logs.Errorf("worker", "claim job failed worker_id=%s assigned_mode=%t err=%v", w.workerID, w.useAssigned, err)
 		return
 	}
 
-	logs.Infof("worker", "processing job job_id=%s deployment_id=%s", job.JobID, job.DeploymentID)
+	if w.useAssigned && w.workers != nil {
+		defer func() {
+			if decErr := w.workers.DecrementJobCount(ctx, w.workerID); decErr != nil {
+				logs.Errorf("worker", "failed to decrement worker job count worker_id=%s err=%v", w.workerID, decErr)
+				return
+			}
+			logs.Debugf("worker", "decremented worker job count worker_id=%s job_id=%s", w.workerID, job.JobID)
+		}()
+	}
+
+	logs.Infof("worker", "processing job worker_id=%s assigned_mode=%t job_id=%s deployment_id=%s assigned_worker_id=%s",
+		w.workerID, w.useAssigned, job.JobID, job.DeploymentID, job.AssignedWorkerID)
 	rec, getErr := w.repo.Get(job.DeploymentID)
 	if getErr != nil {
 		finalStatus = "lookup_failed"
@@ -75,35 +102,78 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 	rec.BuildLogs = "=== worker ===\njob claimed, deployment started\n"
 	w.repo.Update(rec)
 
-	result, buildLogs, deployErr := w.runner.DeployRepo(job.Repo, job.DeploymentID, job.Subdomain, job.Port, job.Env, job.BuildArgs, job.CPUCores, job.MemoryMB)
+	var liveLogsMu sync.Mutex
+	liveBuildLogs := rec.BuildLogs
+	lastPersistedLen := len(liveBuildLogs)
+	lastPersistAt := time.Now()
+
+	persistLiveLogs := func(force bool) {
+		liveLogsMu.Lock()
+		currentLogs := liveBuildLogs
+		shouldPersist := force || len(currentLogs)-lastPersistedLen >= 2048 || time.Since(lastPersistAt) >= time.Second
+		if !shouldPersist {
+			liveLogsMu.Unlock()
+			return
+		}
+		lastPersistedLen = len(currentLogs)
+		lastPersistAt = time.Now()
+		liveLogsMu.Unlock()
+
+		n := rec
+		n.Status = "deploying"
+		n.OwnerWorkerID = w.workerID
+		n.BuildLogs = currentLogs
+		w.repo.Update(n)
+	}
+
+	appendLiveLog := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+
+		liveLogsMu.Lock()
+		liveBuildLogs += chunk
+		liveLogsMu.Unlock()
+
+		persistLiveLogs(false)
+	}
+
+	result, buildLogs, deployErr := w.runner.DeployRepoWithUpdates(job.Repo, job.DeploymentID, job.Subdomain, job.Port, job.Env, job.BuildArgs, job.CPUCores, job.MemoryMB, appendLiveLog)
+	persistLiveLogs(true)
 	if deployErr != nil {
 		finalStatus = "failed"
 		if strings.TrimSpace(buildLogs) == "" {
-			buildLogs = rec.BuildLogs + "\n=== error ===\n" + deployErr.Error() + "\n"
+			liveLogsMu.Lock()
+			capturedLogs := liveBuildLogs
+			liveLogsMu.Unlock()
+			buildLogs = capturedLogs + "\n=== error ===\n" + deployErr.Error() + "\n"
 		}
 		finished := time.Now().UTC()
 		w.repo.Update(domain.DeploymentRecord{
-			DeploymentID: rec.DeploymentID,
-			RequestedBy:  rec.RequestedBy,
-			Repo:         rec.Repo,
-			Subdomain:    rec.Subdomain,
-			Port:         rec.Port,
-			ScalingMode:  rec.ScalingMode,
-			MinReplicas:  rec.MinReplicas,
-			MaxReplicas:  rec.MaxReplicas,
-			CPUTarget:    rec.CPUTarget,
-			CPURequest:   rec.CPURequest,
-			CPULimit:     rec.CPULimit,
-			NodeSelector: rec.NodeSelector,
-			CPUCores:     rec.CPUCores,
-			MemoryMB:     rec.MemoryMB,
-			Status:       "failed",
-			Error:        deployErr.Error(),
-			BuildLogs:    buildLogs,
-			Env:          rec.Env,
-			BuildArgs:    rec.BuildArgs,
-			StartedAt:    rec.StartedAt,
-			FinishedAt:   &finished,
+			DeploymentID:  rec.DeploymentID,
+			OwnerWorkerID: w.workerID,
+			RequestedBy:   rec.RequestedBy,
+			UserID:        rec.UserID,
+			Package:       rec.Package,
+			Repo:          rec.Repo,
+			Subdomain:     rec.Subdomain,
+			Port:          rec.Port,
+			ScalingMode:   rec.ScalingMode,
+			MinReplicas:   rec.MinReplicas,
+			MaxReplicas:   rec.MaxReplicas,
+			CPUTarget:     rec.CPUTarget,
+			CPURequest:    rec.CPURequest,
+			CPULimit:      rec.CPULimit,
+			NodeSelector:  rec.NodeSelector,
+			CPUCores:      rec.CPUCores,
+			MemoryMB:      rec.MemoryMB,
+			Status:        "failed",
+			Error:         deployErr.Error(),
+			BuildLogs:     buildLogs,
+			Env:           rec.Env,
+			BuildArgs:     rec.BuildArgs,
+			StartedAt:     rec.StartedAt,
+			FinishedAt:    &finished,
 		})
 		_ = w.jobs.MarkFailed(ctx, job.JobID, deployErr.Error())
 		logs.Errorf("worker", "deploy failed deployment_id=%s err=%v", rec.DeploymentID, deployErr)
@@ -112,7 +182,10 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 
 	finished := time.Now().UTC()
 	if strings.TrimSpace(buildLogs) == "" {
-		buildLogs = rec.BuildLogs + "\n=== worker ===\ndeployment completed without runtime logs\n"
+		liveLogsMu.Lock()
+		capturedLogs := liveBuildLogs
+		liveLogsMu.Unlock()
+		buildLogs = capturedLogs + "\n=== worker ===\ndeployment completed without runtime logs\n"
 	}
 	hpaBuildLogs := buildLogs
 	if w.enableCPUHPA && rec.ScalingMode == ScalingModeHorizontal {
@@ -129,29 +202,32 @@ func (w *DeploymentWorker) processNext(ctx context.Context) {
 	}
 
 	w.repo.Update(domain.DeploymentRecord{
-		DeploymentID: result.DeploymentID,
-		RequestedBy:  rec.RequestedBy,
-		Repo:         result.Repo,
-		Subdomain:    result.Subdomain,
-		Port:         result.Port,
-		ScalingMode:  rec.ScalingMode,
-		MinReplicas:  rec.MinReplicas,
-		MaxReplicas:  rec.MaxReplicas,
-		CPUTarget:    rec.CPUTarget,
-		CPURequest:   rec.CPURequest,
-		CPULimit:     rec.CPULimit,
-		NodeSelector: rec.NodeSelector,
-		CPUCores:     rec.CPUCores,
-		MemoryMB:     rec.MemoryMB,
-		Container:    result.Container,
-		Image:        result.Image,
-		URL:          result.URL,
-		Status:       "running",
-		BuildLogs:    hpaBuildLogs,
-		Env:          rec.Env,
-		BuildArgs:    rec.BuildArgs,
-		StartedAt:    rec.StartedAt,
-		FinishedAt:   &finished,
+		DeploymentID:  result.DeploymentID,
+		OwnerWorkerID: w.workerID,
+		RequestedBy:   rec.RequestedBy,
+		UserID:        rec.UserID,
+		Package:       rec.Package,
+		Repo:          result.Repo,
+		Subdomain:     result.Subdomain,
+		Port:          result.Port,
+		ScalingMode:   rec.ScalingMode,
+		MinReplicas:   rec.MinReplicas,
+		MaxReplicas:   rec.MaxReplicas,
+		CPUTarget:     rec.CPUTarget,
+		CPURequest:    rec.CPURequest,
+		CPULimit:      rec.CPULimit,
+		NodeSelector:  rec.NodeSelector,
+		CPUCores:      rec.CPUCores,
+		MemoryMB:      rec.MemoryMB,
+		Container:     result.Container,
+		Image:         result.Image,
+		URL:           result.URL,
+		Status:        "running",
+		BuildLogs:     hpaBuildLogs,
+		Env:           rec.Env,
+		BuildArgs:     rec.BuildArgs,
+		StartedAt:     rec.StartedAt,
+		FinishedAt:    &finished,
 	})
 
 	_ = w.jobs.MarkDone(ctx, job.JobID)

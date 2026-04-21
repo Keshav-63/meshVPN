@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	buildlogs "MeshVPN-slef-hosting/control-plane/internal/logs"
@@ -27,30 +28,38 @@ func NewKubernetesDriver(namespace string) DeploymentDriver {
 }
 
 func (d *KubernetesDriver) DeployRepo(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int) (DeploymentResult, string, error) {
+	return d.deployRepo(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB, nil)
+}
+
+func (d *KubernetesDriver) DeployRepoWithUpdates(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int, onUpdate BuildLogUpdateFunc) (DeploymentResult, string, error) {
+	return d.deployRepo(repo, id, subdomain, port, runtimeEnv, buildArgs, cpuCores, memoryMB, onUpdate)
+}
+
+func (d *KubernetesDriver) deployRepo(repo string, id string, subdomain string, port int, runtimeEnv map[string]string, buildArgs map[string]string, cpuCores float64, memoryMB int, onUpdate BuildLogUpdateFunc) (DeploymentResult, string, error) {
 	var logs strings.Builder
 	buildlogs.Infof("runtime-k8s", "deploy start deployment_id=%s repo=%s subdomain=%s port=%d", id, repo, subdomain, port)
 
-	buildlogs.AppendSection(&logs, "clone", fmt.Sprintf("repo=%s", repo))
+	emitBuildSection(&logs, onUpdate, "clone", fmt.Sprintf("repo=%s", repo))
 	appPath, cloneOutput, err := cloneRepo(repo, id)
-	buildlogs.AppendSection(&logs, "clone output", cloneOutput)
+	emitBuildSection(&logs, onUpdate, "clone output", cloneOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), err
 	}
 
 	if err := ensureDockerfile(appPath); err != nil {
-		buildlogs.AppendSection(&logs, "dockerfile check", err.Error())
+		emitBuildSection(&logs, onUpdate, "dockerfile check", err.Error())
 		return DeploymentResult{}, logs.String(), err
 	}
 
-	image, imageErr := d.buildAndPushImage(id, appPath, buildArgs)
+	image, imageErr := d.buildAndPushImageWithStream(id, appPath, buildArgs, onUpdate)
 	if imageErr != nil {
-		buildlogs.AppendSection(&logs, "image build/push", imageErr.Error())
+		emitBuildSection(&logs, onUpdate, "image build/push", imageErr.Error())
 		return DeploymentResult{}, logs.String(), imageErr
 	}
-	buildlogs.AppendSection(&logs, "image", image)
+	emitBuildSection(&logs, onUpdate, "image", image)
 
 	if err := d.ensureNamespace(); err != nil {
-		buildlogs.AppendSection(&logs, "namespace", err.Error())
+		emitBuildSection(&logs, onUpdate, "namespace", err.Error())
 		return DeploymentResult{}, logs.String(), err
 	}
 
@@ -61,14 +70,14 @@ func (d *KubernetesDriver) DeployRepo(repo string, id string, subdomain string, 
 	host := deploymentHost(normalizedSubdomain)
 
 	manifest := d.renderWorkloadManifest(deployment, service, ingress, host, image, port, runtimeEnv, cpuCores, memoryMB)
-	applyOutput, err := runCommandWithInput("", manifest, d.kubectl, "-n", d.namespace, "apply", "-f", "-")
-	buildlogs.AppendSection(&logs, "kubectl apply", applyOutput)
+	applyOutput, err := runCommandWithInputStream("", manifest, onUpdate, d.kubectl, "-n", d.namespace, "apply", "-f", "-")
+	emitBuildSection(&logs, onUpdate, "kubectl apply", applyOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), fmt.Errorf("apply k8s manifests: %w", err)
 	}
 
-	rolloutOutput, err := runCommand("", d.kubectl, "-n", d.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=600s")
-	buildlogs.AppendSection(&logs, "rollout", rolloutOutput)
+	rolloutOutput, err := runCommandStream("", onUpdate, d.kubectl, "-n", d.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=600s")
+	emitBuildSection(&logs, onUpdate, "rollout", rolloutOutput)
 	if err != nil {
 		return DeploymentResult{}, logs.String(), fmt.Errorf("wait deployment rollout: %w", err)
 	}
@@ -110,6 +119,21 @@ func (d *KubernetesDriver) ApplyCPUAutoscaling(workload string, minReplicas int,
 		return "", fmt.Errorf("invalid cpu target utilization for HPA")
 	}
 
+	memoryTargetUtilization := parsePercentEnv("HPA_MEMORY_TARGET_UTILIZATION", 75)
+	if memoryTargetUtilization <= 0 || memoryTargetUtilization > 100 {
+		return "", fmt.Errorf("invalid memory target utilization for HPA")
+	}
+
+	scaleDownStabilization := parseIntEnv("HPA_SCALE_DOWN_STABILIZATION_SECONDS", 60)
+	if scaleDownStabilization < 0 {
+		scaleDownStabilization = 60
+	}
+
+	scaleUpStabilization := parseIntEnv("HPA_SCALE_UP_STABILIZATION_SECONDS", 0)
+	if scaleUpStabilization < 0 {
+		scaleUpStabilization = 0
+	}
+
 	hpaName := "hpa-" + strings.TrimPrefix(workload, "app-")
 	manifest := fmt.Sprintf(`apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -129,10 +153,37 @@ spec:
       target:
         type: Utilization
         averageUtilization: %d
+	- type: Resource
+		resource:
+			name: memory
+			target:
+				type: Utilization
+				averageUtilization: %d
   behavior:
+		scaleUp:
+			stabilizationWindowSeconds: %d
+			selectPolicy: Max
+			policies:
+			- type: Percent
+				value: 100
+				periodSeconds: 15
+			- type: Pods
+				value: 4
+				periodSeconds: 15
     scaleDown:
-      stabilizationWindowSeconds: 300
-`, hpaName, workload, minReplicas, maxReplicas, targetUtilization)
+			stabilizationWindowSeconds: %d
+			selectPolicy: Max
+			policies:
+			- type: Percent
+				value: 50
+				periodSeconds: 30
+			- type: Pods
+				value: 2
+				periodSeconds: 30
+`, hpaName, workload, minReplicas, maxReplicas, targetUtilization, memoryTargetUtilization, scaleUpStabilization, scaleDownStabilization)
+
+	// Defensive normalization: kubectl rejects tab indentation in YAML.
+	manifest = strings.ReplaceAll(manifest, "\t", "  ")
 
 	output, err := runCommandWithInput("", manifest, d.kubectl, "-n", d.namespace, "apply", "-f", "-")
 	if err != nil {
@@ -142,7 +193,37 @@ spec:
 	return output, nil
 }
 
+func parseIntEnv(name string, defaultValue int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultValue
+	}
+
+	return parsed
+}
+
+func parsePercentEnv(name string, defaultValue int) int {
+	value := parseIntEnv(name, defaultValue)
+	if value < 1 || value > 100 {
+		return defaultValue
+	}
+	return value
+}
+
+func ingressMiddlewareAnnotation() string {
+	return strings.TrimSpace(os.Getenv("TRAEFIK_INGRESS_MIDDLEWARE"))
+}
+
 func (d *KubernetesDriver) buildAndPushImage(id string, appPath string, buildArgs map[string]string) (string, error) {
+	return d.buildAndPushImageWithStream(id, appPath, buildArgs, nil)
+}
+
+func (d *KubernetesDriver) buildAndPushImageWithStream(id string, appPath string, buildArgs map[string]string, onUpdate BuildLogUpdateFunc) (string, error) {
 	prefix := strings.TrimSpace(os.Getenv("K8S_IMAGE_PREFIX"))
 	if prefix == "" {
 		return "", fmt.Errorf("K8S_IMAGE_PREFIX is required for kubernetes backend")
@@ -154,11 +235,11 @@ func (d *KubernetesDriver) buildAndPushImage(id string, appPath string, buildArg
 	}
 
 	image := fmt.Sprintf("%s/laptopcloud-%s:%s", prefix, id, id)
-	if _, err := buildImage(image, appPath, buildArgs); err != nil {
+	if _, err := buildImageWithStream(image, appPath, buildArgs, onUpdate); err != nil {
 		return "", err
 	}
 
-	if _, err := runCommand("", "docker", "push", image); err != nil {
+	if _, err := runCommandStream("", onUpdate, "docker", "push", image); err != nil {
 		return "", fmt.Errorf("push image: %w", err)
 	}
 
@@ -213,18 +294,13 @@ func (d *KubernetesDriver) renderWorkloadManifest(deployment string, service str
 		}
 	}
 
-	// ENFORCE STRICT LAPTOP SAFE LIMITS HERE
-	// If the user requests 0 CPU, give them bare minimum base instead of unlimited.
+	// Keep a tiny baseline when values are missing.
 	if cpuCores <= 0 {
 		cpuCores = 0.05 // 50 millicores baseline for idle pods
 	}
 	if memoryMB <= 0 {
 		memoryMB = 64 // 64MB baseline
 	}
-
-	// Cap absolute maximum limits to prevent laptop freezing
-	maxCpuLimitMilli := 500 // Never allow more than half a core per pod
-	maxMemLimitMB := 512    // Never allow more than 512MB per pod
 
 	cpuMilli := int(cpuCores * 1000)
 
@@ -233,14 +309,14 @@ func (d *KubernetesDriver) renderWorkloadManifest(deployment string, service str
 	sb.WriteString(fmt.Sprintf("            cpu: %dm\n", cpuMilli))
 	sb.WriteString(fmt.Sprintf("            memory: %dMi\n", memoryMB))
 
-	// Create safe limits
-	limitCpu := cpuMilli * 2 // Limit is double the request
-	if limitCpu > maxCpuLimitMilli {
-		limitCpu = maxCpuLimitMilli
+	// Use package-scaled limits and guarantee limits >= requests.
+	limitCpu := cpuMilli * 2
+	if limitCpu < cpuMilli {
+		limitCpu = cpuMilli
 	}
-	limitMem := memoryMB * 2 // Limit is double the request
-	if limitMem > maxMemLimitMB {
-		limitMem = maxMemLimitMB
+	limitMem := memoryMB * 2
+	if limitMem < memoryMB {
+		limitMem = memoryMB
 	}
 
 	sb.WriteString("          limits:\n")
@@ -267,7 +343,14 @@ func (d *KubernetesDriver) renderWorkloadManifest(deployment string, service str
 	sb.WriteString(fmt.Sprintf("  name: %s\n", ingress))
 	sb.WriteString("  annotations:\n")
 	sb.WriteString("    traefik.ingress.kubernetes.io/router.entrypoints: web\n")
+	if middleware := ingressMiddlewareAnnotation(); middleware != "" {
+		sb.WriteString(fmt.Sprintf("    traefik.ingress.kubernetes.io/router.middlewares: %s\n", middleware))
+	}
+	sb.WriteString("  labels:\n")
+	sb.WriteString(fmt.Sprintf("    app: %s\n", deployment))
+	sb.WriteString(fmt.Sprintf("    deployment-id: \"%s\"\n", strings.TrimPrefix(deployment, "app-")))
 	sb.WriteString("spec:\n")
+	sb.WriteString("  ingressClassName: traefik\n")
 	sb.WriteString("  rules:\n")
 	sb.WriteString(fmt.Sprintf("  - host: %s\n", host))
 	sb.WriteString("    http:\n")

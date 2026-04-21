@@ -323,6 +323,9 @@ REQUIRE_AUTH=false
 # Runtime
 RUNTIME_BACKEND=k3s
 ENABLE_CPU_HPA=false
+HPA_MEMORY_TARGET_UTILIZATION=75
+HPA_SCALE_UP_STABILIZATION_SECONDS=0
+HPA_SCALE_DOWN_STABILIZATION_SECONDS=60
 
 # Kubernetes
 K8S_NAMESPACE=meshvpn-apps
@@ -337,7 +340,6 @@ APP_BASE_DOMAIN=keshavstack.tech
 
 # Worker (reduced for minimal resources)
 WORKER_POLL_INTERVAL=5s
-WORKER_BATCH_SIZE=1
 
 # Cloudflare Tunnel Token (get from setup script or dashboard)
 CLOUDFLARE_TUNNEL_TOKEN=your_tunnel_token_here

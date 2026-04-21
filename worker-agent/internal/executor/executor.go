@@ -133,6 +133,10 @@ func (e *JobExecutor) generateManifest(deploymentID, imageName, subdomain string
 	// Prefix deployment ID with "app-" to ensure K8s naming compliance
 	// K8s resource names must start with a letter
 	resourceName := fmt.Sprintf("app-%s", deploymentID)
+	baseDomain := strings.Trim(strings.ToLower(strings.TrimSpace(e.runtime.AppBaseDomain)), ".")
+	if baseDomain == "" {
+		baseDomain = "keshavstack.tech"
+	}
 
 	return fmt.Sprintf(`
 apiVersion: apps/v1
@@ -181,7 +185,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   rules:
-  - host: %s.keshavstack.tech
+	- host: %s.%s
     http:
       paths:
       - path: /
@@ -195,5 +199,5 @@ spec:
 		int(cpuCores*1000), memoryMB,
 		int(cpuCores*1000*2), memoryMB*2,
 		resourceName, resourceName, port,
-		resourceName, subdomain, resourceName)
+		resourceName, subdomain, baseDomain, resourceName)
 }

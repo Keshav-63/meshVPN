@@ -46,6 +46,29 @@ Quick cleanup:
 - `infra/docker-compose.yml`: Runs Cloudflare Tunnel
 - `infra/observability/`: Lean Prometheus + Grafana stack (350MB limit)
 - `scripts/`: Cloudflare Tunnel automation scripts
+- `tools/traffic-forwarder/`: Traffic metrics collection from Traefik logs
+
+## 📖 Documentation
+
+### For Frontend Developers
+
+- **[Frontend Integration Guide](docs/FRONTEND-INTEGRATION.md)** - Complete API reference with React examples
+- **[API Quick Reference](docs/API-QUICK-REFERENCE.md)** - Fast endpoint lookup
+- **[System Architecture](docs/SYSTEM-ARCHITECTURE.md)** - Complete system overview and data flow
+
+### For Platform Developers
+
+- **[Deployment Analytics API](docs/DEPLOYMENT-ANALYTICS-API.md)** - Analytics endpoints documentation
+- **[Multi-Worker Architecture](docs/MULTI-WORKER-ARCHITECTURE.md)** - Distributed worker setup
+- **[Dynamic Placement and Failover Architecture](docs/DYNAMIC-PLACEMENT-FAILOVER-ARCHITECTURE.md)** - End-to-end target architecture, implementation plan, and dry-run matrix
+- **[E2E Swagger + Grafana Validation](docs/E2E-SWAGGER-GRAFANA-VALIDATION.md)** - Full end-to-end test runbook for API, metrics, and dashboards
+- **[Multi-Worker Setup](docs/MULTI-WORKER-SETUP.md)** - Worker deployment guide
+
+### For Operators
+
+- **[Fresh Install Guide](docs/FRESH-INSTALL.md)** - Clean installation from scratch
+- **[Setup Guide](docs/SETUP.md)** - Complete setup documentation
+- **[K3D Cluster Setup](K3D-CLUSTER-SETUP.md)** - Kubernetes cluster configuration
 
 ## Features
 
