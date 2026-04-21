@@ -12,6 +12,7 @@ runtime:
   kubeconfig: /home/user/.kube/config
   namespace: worker-apps
   kubectl_bin: kubectl
+  metrics_port: 9091
   app_base_domain: keshavstack.tech
   image_prefix: ghcr.io/your-github-username  # REQUIRED: Replace with your GitHub username
  

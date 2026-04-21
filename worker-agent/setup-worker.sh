@@ -25,8 +25,9 @@ NC='\033[0m' # No Color
 echo "This script will:"
 echo "  1. Check prerequisites (Tailscale, Docker, kubectl, K3D)"
 echo "  2. Setup K3D Kubernetes cluster"
-echo "  3. Configure worker agent"
-echo "  4. Build and start worker"
+echo "  3. Configure Kubernetes namespace and GHCR pull secret"
+echo "  4. Configure worker agent"
+echo "  5. Build and start worker"
 echo ""
 read -p "Continue? (y/n) " -n 1 -r
 echo
@@ -36,7 +37,7 @@ fi
 
 # Step 1: Check Tailscale
 echo ""
-echo -e "${YELLOW}[1/6] Checking Tailscale...${NC}"
+echo -e "${YELLOW}[1/7] Checking Tailscale...${NC}"
 if ! command -v tailscale &> /dev/null; then
     echo -e "${RED}Tailscale not found!${NC}"
     echo "Installing Tailscale..."
@@ -57,7 +58,7 @@ echo -e "${GREEN}✓ Tailscale connected: $WORKER_IP${NC}"
 
 # Step 2: Check Docker
 echo ""
-echo -e "${YELLOW}[2/6] Checking Docker...${NC}"
+echo -e "${YELLOW}[2/7] Checking Docker...${NC}"
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}Docker not found!${NC}"
     echo "Installing Docker..."
@@ -76,9 +77,15 @@ fi
 
 echo -e "${GREEN}✓ Docker running${NC}"
 
-# Step 3: Check K3D
+# Step 3: Check Git + K3D
 echo ""
-echo -e "${YELLOW}[3/6] Checking K3D...${NC}"
+echo -e "${YELLOW}[3/7] Checking K3D...${NC}"
+if ! command -v git &> /dev/null; then
+    echo -e "${RED}git not found!${NC}"
+    echo "Please install git first (example: sudo apt update && sudo apt install -y git)"
+    exit 1
+fi
+
 if ! command -v k3d &> /dev/null; then
     echo "Installing K3D..."
     curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
@@ -88,7 +95,7 @@ echo -e "${GREEN}✓ K3D installed${NC}"
 
 # Step 4: Setup K3D cluster
 echo ""
-echo -e "${YELLOW}[4/6] Setting up K3D cluster...${NC}"
+echo -e "${YELLOW}[4/7] Setting up K3D cluster...${NC}"
 if k3d cluster list | grep -q "worker-cluster"; then
     echo "K3D cluster 'worker-cluster' already exists"
     read -p "Delete and recreate? (y/n) " -n 1 -r
@@ -118,9 +125,48 @@ fi
 
 echo -e "${GREEN}✓ kubectl working${NC}"
 
-# Step 5: Configure worker agent
+# Step 5: Ensure namespace + GHCR image pull secret
+WORKER_NAMESPACE="worker-apps"
 echo ""
-echo -e "${YELLOW}[5/6] Configuring worker agent...${NC}"
+echo -e "${YELLOW}[5/7] Configuring namespace and GHCR pull secret...${NC}"
+
+if ! kubectl get namespace "$WORKER_NAMESPACE" &> /dev/null; then
+    kubectl create namespace "$WORKER_NAMESPACE"
+fi
+echo -e "${GREEN}✓ Namespace ready: $WORKER_NAMESPACE${NC}"
+
+echo ""
+read -p "Configure GHCR image pull secret now? (recommended) (y/n) " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "GitHub username for GHCR: " GHCR_USER
+    read -s -p "GitHub token (read:packages, write:packages): " GHCR_TOKEN
+    echo
+
+    if [ -z "$GHCR_USER" ] || [ -z "$GHCR_TOKEN" ]; then
+        echo -e "${YELLOW}Skipped GHCR secret setup (username/token missing).${NC}"
+    else
+        kubectl create secret docker-registry ghcr-secret \
+            --docker-server=ghcr.io \
+            --docker-username="$GHCR_USER" \
+            --docker-password="$GHCR_TOKEN" \
+            -n "$WORKER_NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl patch serviceaccount default \
+            -n "$WORKER_NAMESPACE" \
+            -p '{"imagePullSecrets": [{"name": "ghcr-secret"}]}'
+
+        echo -e "${GREEN}✓ GHCR pull secret configured in namespace $WORKER_NAMESPACE${NC}"
+    fi
+    unset GHCR_TOKEN
+else
+    echo -e "${YELLOW}Skipped GHCR secret setup. Private GHCR images may fail with ImagePullBackOff.${NC}"
+fi
+
+# Step 6: Configure worker agent
+echo ""
+echo -e "${YELLOW}[6/7] Configuring worker agent...${NC}"
 
 if [ ! -f "agent.yaml" ]; then
     if [ -f "agent.yaml.example" ]; then
@@ -197,6 +243,8 @@ if [ -z "$IMAGE_PREFIX" ]; then
     IMAGE_PREFIX="ghcr.io/meshvpn"
 fi
 
+METRICS_PORT=9091
+
 # Update agent.yaml
 cat > agent.yaml <<EOF
 # Worker Agent Configuration
@@ -214,8 +262,9 @@ control_plane:
 runtime:
   type: kubernetes
   kubeconfig: $HOME/.kube/config
-  namespace: worker-apps
+    namespace: $WORKER_NAMESPACE
   kubectl_bin: kubectl
+    metrics_port: $METRICS_PORT
   image_prefix: $IMAGE_PREFIX
 
 capabilities:
@@ -229,9 +278,9 @@ EOF
 
 echo -e "${GREEN}✓ agent.yaml configured${NC}"
 
-# Step 6: Build worker agent
+# Step 7: Build worker agent
 echo ""
-echo -e "${YELLOW}[6/6] Building worker agent...${NC}"
+echo -e "${YELLOW}[7/7] Building worker agent...${NC}"
 
 if [ ! -f "go.mod" ]; then
     echo "Initializing Go module..."

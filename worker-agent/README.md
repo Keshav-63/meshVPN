@@ -125,6 +125,7 @@ runtime:
   kubeconfig: string            # Path to kubeconfig
   namespace: string             # K8s namespace for deployments
   kubectl_bin: string           # Path to kubectl binary
+  metrics_port: int             # Metrics HTTP port (default 9091)
 
 capabilities:
   memory_gb: int                # Total RAM (GB)
@@ -171,6 +172,23 @@ ping 100.64.1.1  # Replace with control-plane IP
 curl http://100.64.1.1:8080/health
 ```
 
+### Start Cloudflare Tunnel for Public Access
+
+Use this when deployments are reachable locally with a Host header but not publicly from the internet.
+
+```bash
+# Start tunnel
+cd /mnt/c/Users/Shreeyansh/Desktop/MeshVPN-Veltrix/meshVPN/infra
+ln -sf ../.env .env
+docker compose up -d cloudflared
+
+# Check status
+docker compose ps
+
+# Check logs
+docker compose logs -f cloudflared
+```
+
 ## Troubleshooting
 
 ### Worker Fails to Register
@@ -214,6 +232,39 @@ curl http://100.64.1.1:8080/health
 3. Check GHCR authentication: `docker login ghcr.io`
 4. Ensure worker has internet access (to clone from GitHub)
 5. Review worker logs for specific error
+
+### Metrics Port Already in Use
+
+**Error:** `Metrics server error: listen tcp :9090: bind: address already in use`
+
+**Cause:** Another process is already using the metrics port (for example local Prometheus on 9090).
+
+**Solutions:**
+1. Stop all worker processes: `pkill -f worker-agent`
+2. Confirm none are running: `pgrep -af worker-agent`
+3. Check who owns the port: `ss -ltnp | grep :9090`
+4. Set a different metrics port in `agent.yaml` (example `runtime.metrics_port: 9091`)
+5. Start worker: `./worker-agent -config agent.yaml`
+
+### Deployment URL Not Publicly Reachable
+
+**Symptom:** Deployment works with local Host header, but public URL returns 404 or is unreachable.
+
+**Solutions:**
+1. Verify ingress host exists: `kubectl get ingress -n worker-apps`
+2. Verify backend endpoints exist: `kubectl get endpoints -n worker-apps`
+3. Start Cloudflare tunnel from `infra/` and verify logs
+4. Confirm URL matches deployed subdomain exactly (for example `final-test.keshavstack.tech` vs `final-worker.keshavstack.tech`)
+
+### Worker Heartbeat / Claim Timeouts
+
+**Error:** `context deadline exceeded` on `/heartbeat` or `/claim-job`
+
+**Solutions:**
+1. Confirm control-plane is up: `curl http://<control-plane-ip>:8080/health`
+2. Verify Tailscale connectivity both ways: `tailscale status`
+3. Check for network flaps or firewall rules affecting Tailscale traffic
+4. Keep worker running; it auto-recovers and resumes job polling when control-plane is reachable
 
 ## Running as Service
 
