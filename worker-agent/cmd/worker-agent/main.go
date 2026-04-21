@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"flag"
 	"log"
 	"net/http"
@@ -47,8 +48,9 @@ func main() {
 	// Start metrics HTTP server
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		log.Printf("Starting metrics server on :9090")
-		if err := http.ListenAndServe(":9090", nil); err != nil {
+		metricsAddr := fmt.Sprintf(":%d", cfg.Runtime.MetricsPort)
+		log.Printf("Starting metrics server on %s", metricsAddr)
+		if err := http.ListenAndServe(metricsAddr, nil); err != nil {
 			log.Printf("Metrics server error: %v", err)
 		}
 	}()

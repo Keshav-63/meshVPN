@@ -30,6 +30,7 @@ type RuntimeConfig struct {
 	Kubeconfig    string `yaml:"kubeconfig"`
 	Namespace     string `yaml:"namespace"`
 	KubectlBin    string `yaml:"kubectl_bin"`
+	MetricsPort   int    `yaml:"metrics_port"`
 	ImagePrefix   string `yaml:"image_prefix"`    // e.g., ghcr.io/keshav-63
 	AppBaseDomain string `yaml:"app_base_domain"` // e.g., keshavstack.tech
 }
@@ -63,6 +64,13 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Runtime.Type == "" {
 		cfg.Runtime.Type = "kubernetes"
+	}
+	if cfg.Runtime.MetricsPort == 0 {
+		// 9090 is commonly used by system Prometheus on Linux hosts.
+		cfg.Runtime.MetricsPort = 9091
+	}
+	if cfg.Runtime.MetricsPort < 1 || cfg.Runtime.MetricsPort > 65535 {
+		return nil, fmt.Errorf("runtime.metrics_port must be between 1 and 65535")
 	}
 	if cfg.Runtime.ImagePrefix == "" {
 		return nil, fmt.Errorf("runtime.image_prefix is required (e.g., ghcr.io/your-username)")
