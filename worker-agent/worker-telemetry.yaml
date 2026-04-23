@@ -1,0 +1,57 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traffic-forwarder
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traffic-forwarder
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traffic-forwarder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traffic-forwarder
+subjects:
+- kind: ServiceAccount
+  name: traffic-forwarder
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-forwarder
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-forwarder
+  template:
+    metadata:
+      labels:
+        app: traffic-forwarder
+    spec:
+      serviceAccountName: traffic-forwarder
+      containers:
+      - name: forwarder
+        # Use the image you built for the traffic-forwarder
+        image: ghcr.io/your-org/traffic-forwarder:latest 
+        env:
+        # CRITICAL: Point this to the Control Plane's Tailscale IP
+        - name: CONTROL_PLANE_URL
+          value: "http://100.x.x.x:8080" 
+        - name: TRAEFIK_NAMESPACE
+          value: "kube-system"
+        - name: APP_BASE_DOMAIN
+          value: "keshavstack.tech"

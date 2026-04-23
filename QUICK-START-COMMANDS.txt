@@ -8,10 +8,14 @@
 cd ~/MeshVPN-slef-hosting && chmod +x scripts/setup-k3d-cluster.sh && ./scripts/setup-k3d-cluster.sh
 
 
-2️⃣  START CONTROL-PLANE (Run from WSL)
+2️⃣  START CONTROL-PLANE & MESH-ROUTER (Run from WSL)
 ──────────────────────────────────────────────────────────────
 
+# Terminal 1: Start Control Plane
 cd ~/MeshVPN-slef-hosting && ./start-control-plane.sh
+
+# Terminal 2: Start Mesh Router (handles traffic directly to workers)
+cd ~/MeshVPN-slef-hosting && ./start-mesh-router.sh
 
 
 3️⃣  TEST TELEMETRY (After control-plane is running)
