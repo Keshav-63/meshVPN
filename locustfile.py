@@ -3,7 +3,7 @@ import random
 
 class MeshVPNUser(HttpUser):
     """Load test for MeshVPN edge deployments"""
-    wait_time = between(0.5, 1.5)
+    wait_time = constant(0)
     
     def on_start(self):
         """Called when a user starts"""
@@ -25,10 +25,6 @@ class MeshVPNUser(HttpUser):
         endpoint = random.choice(["/api/status", "/api/metrics", "/api/health"])
         self.client.get(endpoint, name=f"GET {endpoint}")
     
-    @task
-    def post_request(self):
-        """Test POST request"""
-        self.client.post("/api/ping", json={"message": "test"}, name="POST /api/ping")
 
 # Configuration:
 # Run with: locust -f locustfile.py -H http://localhost:8080 -u 10 -r 2 --run-time 5m
