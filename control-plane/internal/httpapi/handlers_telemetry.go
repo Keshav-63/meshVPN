@@ -59,14 +59,14 @@ type DeploymentRequestPayload struct {
 }
 
 // RecordDeploymentRequest handles POST /api/telemetry/deployment-request
-// This endpoint receives telemetry data from Traefik middleware or deployment proxies
+// This endpoint receives telemetry data from Traefik middleware or deployment proxie
 //
 // @Summary Record deployment HTTP request metrics
 // @Description Records metrics for a single HTTP request to a user deployment
 // @Tags Telemetry
 // @Accept json
 // @Produce json
-// @Param request body DeploymentRequestPayload true "Request metrics"
+// @Param request body DeploymentRequestPayload true "Request metrics" 
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
