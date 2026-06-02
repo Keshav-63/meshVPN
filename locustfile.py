@@ -23,9 +23,4 @@ class MeshVPNUser(HttpUser):
     def api_request(self):
         """Test API endpoint"""
         endpoint = random.choice(["/api/status", "/api/metrics", "/api/health"])
-        self.client.get(endpoint, name=f"GET {endpoint}")
-    
-
-# Configuration:
-# Run with: locust -f locustfile.py -H http://localhost:8080 -u 10 -r 2 --run-time 5m
-# Replace http://localhost:8080 with your actual service URL 
+        self.client.get(endpoint, name=f"GET {endpoints})
