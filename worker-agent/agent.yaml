@@ -8,13 +8,13 @@ worker:
   max_concurrent_jobs: 2
 
 control_plane:
-  url: http://100.109.33.25:8080
+  url: http://100.88.151.60:8080
 
   shared_secret: "meshvpn-worker-secret-change-in-production"
  
 runtime:
   type: kubernetes
-  kubeconfig: /home/Shreeyansh/.kube/config
+  kubeconfig: /home/Keshav/.kube/config
   namespace: worker-apps
   kubectl_bin: kubectl
   metrics_port: 9091

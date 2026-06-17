@@ -459,6 +459,12 @@ const docTemplate = `{
                         "description": "Number of log lines to retrieve (max 5000)",
                         "name": "tail",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Byte cursor for incremental logs (returns delta when provided)",
+                        "name": "cursor",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -466,6 +472,86 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httpapi.AppLogsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deployments/{id}/app-logs/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stream incremental application log updates to avoid duplicate polling payloads",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "Stream live application logs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 200,
+                        "description": "Number of log lines to retrieve (max 5000)",
+                        "name": "tail",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JWT token (SSE doesn't support headers)",
+                        "name": "token",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream",
+                        "schema": {
+                            "type": "string"
                         }
                     },
                     "400": {
@@ -553,6 +639,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/deployments/{id}/build-logs/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stream incremental build logs while deployment is building",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Deployments"
+                ],
+                "summary": "Stream live build logs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "JWT token (SSE doesn't support headers)",
+                        "name": "token",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Check if the API is running",
@@ -594,6 +741,41 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "Platform analytics",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/platform/analytics/deployments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns per-deployment analytics rows for platform dashboards.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Platform"
+                ],
+                "summary": "Get platform deployment analytics list",
+                "responses": {
+                    "200": {
+                        "description": "Per-deployment platform analytics",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -651,6 +833,47 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/user/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns aggregate and per-deployment analytics for the authenticated user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Get user analytics summary",
+                "responses": {
+                    "200": {
+                        "description": "User analytics summary",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/httpapi.ErrorResponse"
                         }
@@ -834,6 +1057,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "owner_worker_id": {
+                    "type": "string"
+                },
                 "package": {
                     "type": "string"
                 },
@@ -968,9 +1194,21 @@ const docTemplate = `{
                     "type": "string",
                     "example": "myapp-container"
                 },
+                "cursor": {
+                    "type": "integer",
+                    "example": 1200
+                },
+                "delta": {
+                    "type": "boolean",
+                    "example": true
+                },
                 "deployment_id": {
                     "type": "string",
                     "example": "dep-123456"
+                },
+                "next_cursor": {
+                    "type": "integer",
+                    "example": 1680
                 },
                 "tail": {
                     "type": "integer",
@@ -1075,7 +1313,7 @@ const docTemplate = `{
                     "example": "https://github.com/user/repo"
                 },
                 "scaling_mode": {
-                    "description": "Advanced options (optional - overridden by package if subscriber)",
+                    "description": "Advanced autoscaling options (optional)",
                     "type": "string",
                     "example": "horizontal"
                 },
@@ -1112,6 +1350,10 @@ const docTemplate = `{
                 "memory_mb": {
                     "type": "integer",
                     "example": 512
+                },
+                "memory_target_utilization": {
+                    "type": "integer",
+                    "example": 75
                 },
                 "message": {
                     "type": "string",

@@ -88,6 +88,8 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      owner_worker_id:
+        type: string
       package:
         type: string
       port:
@@ -179,9 +181,18 @@ definitions:
       container:
         example: myapp-container
         type: string
+      cursor:
+        example: 1200
+        type: integer
+      delta:
+        example: true
+        type: boolean
       deployment_id:
         example: dep-123456
         type: string
+      next_cursor:
+        example: 1680
+        type: integer
       tail:
         example: 200
         type: integer
@@ -253,7 +264,7 @@ definitions:
         example: https://github.com/user/repo
         type: string
       scaling_mode:
-        description: Advanced options (optional - overridden by package if subscriber)
+        description: Advanced autoscaling options (optional)
         example: horizontal
         type: string
       subdomain:
@@ -282,6 +293,9 @@ definitions:
         type: integer
       memory_mb:
         example: 512
+        type: integer
+      memory_target_utilization:
+        example: 75
         type: integer
       message:
         example: deployment queued
@@ -679,6 +693,10 @@ paths:
         in: query
         name: tail
         type: integer
+      - description: Byte cursor for incremental logs (returns delta when provided)
+        in: query
+        name: cursor
+        type: integer
       produces:
       - application/json
       responses:
@@ -709,6 +727,59 @@ paths:
       security:
       - BearerAuth: []
       summary: Get application runtime logs
+      tags:
+      - Deployments
+  /deployments/{id}/app-logs/stream:
+    get:
+      consumes:
+      - application/json
+      description: Stream incremental application log updates to avoid duplicate polling
+        payloads
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 200
+        description: Number of log lines to retrieve (max 5000)
+        in: query
+        name: tail
+        type: integer
+      - description: JWT token (SSE doesn't support headers)
+        in: query
+        name: token
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Stream live application logs
       tags:
       - Deployments
   /deployments/{id}/build-logs:
@@ -742,6 +813,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Get deployment build logs
+      tags:
+      - Deployments
+  /deployments/{id}/build-logs/stream:
+    get:
+      consumes:
+      - application/json
+      description: Stream incremental build logs while deployment is building
+      parameters:
+      - description: Deployment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: JWT token (SSE doesn't support headers)
+        in: query
+        name: token
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Stream live build logs
       tags:
       - Deployments
   /health:
@@ -779,6 +889,28 @@ paths:
       summary: Get platform analytics
       tags:
       - Platform
+  /platform/analytics/deployments:
+    get:
+      consumes:
+      - application/json
+      description: Returns per-deployment analytics rows for platform dashboards.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Per-deployment platform analytics
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get platform deployment analytics list
+      tags:
+      - Platform
   /platform/workers/{id}/analytics:
     get:
       consumes:
@@ -811,6 +943,33 @@ paths:
       summary: Get worker analytics
       tags:
       - Platform
+  /user/analytics:
+    get:
+      consumes:
+      - application/json
+      description: Returns aggregate and per-deployment analytics for the authenticated
+        user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User analytics summary
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get user analytics summary
+      tags:
+      - Analytics
   /workers:
     get:
       consumes:
